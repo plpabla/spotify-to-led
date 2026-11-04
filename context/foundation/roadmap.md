@@ -3,7 +3,7 @@ project: spotify-to-led
 version: 1
 status: draft
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-04
 prd_version: 1
 main_goal: quality
 top_blocker: external
@@ -68,7 +68,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 
 | ID   | Change ID                                   | Outcome (user can ...)                                                                                      | Prerequisites    | PRD refs                                        | Status   |
 | ---- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------- | -------- |
-| F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | ready    |
+| F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | in-progress |
 | F-02 | `systemd-unit-and-persistent-logs`          | (foundation) the service is supervised by a Trixie-correct systemd unit whose logs survive a reboot         | F-01             | FR-014, NFR-02                                  | proposed |
 | F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | ready    |
 | S-01 | `spotify-authorization-and-playback-read`   | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | proposed |
@@ -145,7 +145,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   could go wrong is scope: this must stay a skeleton plus one interface and a single-frame smoke
   test on the Pi, not a finished board driver. If `idotmatrix` turns out to be broken on 3.14, this
   is the cheapest possible place to discover it.
-- **Status:** ready
+- **Status:** in-progress
 
 ### F-02: Systemd unit and logs that survive a reboot
 
