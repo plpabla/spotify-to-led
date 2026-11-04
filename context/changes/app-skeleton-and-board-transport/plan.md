@@ -422,7 +422,7 @@ No database and no persisted state, so nothing to unwind. Two things change for 
 
 #### Manual
 
-- [x] 2.5 The written `latest.png` shows the expected quadrant colours and orientation, and becomes the phase 5 reference
+- [x] 2.5 The written `latest.png` shows the expected quadrant colours and orientation, and becomes the phase 5 reference -- e58b748
 
 ### Phase 3: Settings and the service skeleton
 
@@ -452,10 +452,10 @@ No database and no persisted state, so nothing to unwind. Two things change for 
 
 #### Automated
 
-- [x] 5.1 On the Pi, `uv sync --frozen` succeeds and the suite passes there
+- [x] 5.1 On the Pi, `uv sync --frozen` succeeds and the suite passes there -- e58b748
 
 #### Manual
 
-- [x] 5.2 The physical 32x32 board shows the test pattern pushed from the Pi, matching the phase 2 reference (closes research open question 2)
-- [x] 5.3 A board power-cycle shows disconnect, backoff and recovery in `journalctl` (informs S-03, does not accept FR-013)
-- [x] 5.4 `infrastructure.md`, `roadmap.md` and `research.md` record the observed outcome
+- [x] 5.2 The physical 32x32 board shows the test pattern pushed from the Pi, matching the phase 2 reference (closes research open question 2) -- e58b748
+- [x] 5.3 A board power-cycle shows disconnect, backoff and recovery in `journalctl` (informs S-03, does not accept FR-013) -- e58b748
+- [x] 5.4 `infrastructure.md`, `roadmap.md` and `research.md` record the observed outcome -- e58b748
