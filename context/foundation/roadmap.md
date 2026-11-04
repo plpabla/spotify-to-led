@@ -68,7 +68,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 
 | ID   | Change ID                                   | Outcome (user can ...)                                                                                      | Prerequisites    | PRD refs                                        | Status   |
 | ---- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------- | -------- |
-| F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | in-progress |
+| F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | done        |
 | F-02 | `systemd-unit-and-persistent-logs`          | (foundation) the service is supervised by a Trixie-correct systemd unit whose logs survive a reboot         | F-01             | FR-014, NFR-02                                  | proposed |
 | F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | ready    |
 | S-01 | `spotify-authorization-and-playback-read`   | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | proposed |
@@ -146,7 +146,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   could go wrong is scope: this must stay a skeleton plus one interface and a single-frame smoke
   test on the Pi, not a finished board driver. If `idotmatrix` turns out to be broken on 3.14, this
   is the cheapest possible place to discover it.
-- **Status:** in-progress
+- **Status:** done
 
 ### F-02: Systemd unit and logs that survive a reboot
 
@@ -471,3 +471,8 @@ closes.)
 
 (Empty on first generation. `/10x-archive` appends here and flips the matching item's `Status` to
 `done` when a change is archived. Do not pre-populate.)
+
+- **F-01: (foundation) a real `spotify_to_led` service package replaces the uv placeholder and can
+  push a single 32x32 frame to the board through one transport interface that has both a real
+  Bluetooth implementation and a stub that writes the frame to a PNG** -- Archived 2026-11-04 ->
+  `context/archive/2026-11-03-app-skeleton-and-board-transport/`. Lesson: --.

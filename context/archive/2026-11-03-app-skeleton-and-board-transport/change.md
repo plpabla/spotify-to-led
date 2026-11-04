@@ -1,10 +1,10 @@
 ---
 change_id: app-skeleton-and-board-transport
 title: Replace the uv placeholder with a service package and a swappable board transport
-status: impl_reviewed
+status: archived
 created: 2026-11-03
 updated: 2026-11-04
-archived_at: null
+archived_at: 2026-11-04T18:39:04Z
 ---
 
 ## Notes
