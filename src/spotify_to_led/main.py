@@ -61,7 +61,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
-        await transport.close()
+        try:
+            await transport.close()
+        except Exception:
+            # Same reasoning as the task's own guard: a board fault is reported,
+            # never raised. Escaping here would put a traceback in the shutdown
+            # log on every unclean teardown, which is noise in the exact journal
+            # the unattended run is read from.
+            logger.exception("closing the board transport failed")
 
 
 app = FastAPI(title="spotify-to-led", lifespan=lifespan)

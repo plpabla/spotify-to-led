@@ -60,6 +60,13 @@ class FailingTransport(CountingTransport):
         raise OSError("the board is not reachable")
 
 
+class FailingCloseTransport(CountingTransport):
+    """A board whose teardown raises, as a link dying mid-shutdown would."""
+
+    async def close(self) -> None:
+        raise OSError("the link went away during shutdown")
+
+
 def use_transport(
     monkeypatch: pytest.MonkeyPatch, transport: CountingTransport, tmp_path: Path
 ) -> None:
@@ -115,6 +122,23 @@ def test_a_failing_connect_leaves_healthz_answering_and_is_logged(
     # worse bug than the crash it replaces.
     errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
     assert errors, "the board failure must be logged at error level"
+    assert errors[0].exc_info is not None, "the traceback must reach the log"
+
+
+def test_a_failing_close_does_not_escape_the_lifespan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Escaping here would mean a shutdown traceback in the journal on every
+    # unclean teardown, in the exact log the unattended run is read from.
+    transport = FailingCloseTransport()
+    use_transport(monkeypatch, transport, tmp_path)
+
+    with caplog.at_level(logging.ERROR):
+        with TestClient(main.app) as client:
+            assert client.get("/healthz").status_code == 200
+
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert errors, "the teardown failure must be logged at error level"
     assert errors[0].exc_info is not None, "the traceback must reach the log"
 
 

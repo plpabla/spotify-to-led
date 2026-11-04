@@ -89,3 +89,24 @@ def test_idotmatrix_with_a_mac_is_accepted(clean_env: None) -> None:
 def test_an_unknown_transport_is_rejected(clean_env: None) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, board_transport="carrier-pigeon")
+
+
+def test_a_board_size_the_library_has_no_screensize_for_is_rejected(
+    clean_env: None,
+) -> None:
+    # Without this the value reaches `ScreenSize((17, 17))` and the process dies
+    # on an enum lookup, which reads as a library fault rather than a typo.
+    with pytest.raises(ValidationError, match="board_size"):
+        Settings(_env_file=None, board_size=17)
+
+
+@pytest.mark.parametrize("heartbeat", [0, -1.5])
+def test_a_non_positive_heartbeat_is_rejected(
+    clean_env: None, heartbeat: float
+) -> None:
+    with pytest.raises(ValidationError, match="board_heartbeat_seconds"):
+        Settings(_env_file=None, board_heartbeat_seconds=heartbeat)
+
+
+def test_an_unset_heartbeat_disables_it_rather_than_failing(clean_env: None) -> None:
+    assert Settings(_env_file=None, board_heartbeat_seconds=None).board_heartbeat_seconds is None
