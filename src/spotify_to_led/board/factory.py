@@ -14,7 +14,13 @@ def create_transport(settings: Settings) -> BoardTransport:
     if settings.board_transport == "stub":
         return PngBoardTransport(settings.stub_frame_dir, settings.board_size)
 
-    # The real adapter gets constructed here, with its module imported inside
-    # this branch rather than at module level, so a development machine with
-    # no working Bluetooth stack never imports bleak.
-    raise NotImplementedError("the idotmatrix transport is not implemented yet")
+    # The adapter's module is imported inside this branch rather than at module
+    # level, so a development machine with no working Bluetooth stack never
+    # imports bleak.
+    from spotify_to_led.board.idotmatrix_transport import IDotMatrixBoardTransport
+
+    # `idot_mac` is typed as optional, but `Settings` rejects a MAC-less
+    # hardware configuration, so it is set whenever this branch runs.
+    return IDotMatrixBoardTransport(
+        settings.idot_mac, settings.board_size, settings.board_heartbeat_seconds
+    )

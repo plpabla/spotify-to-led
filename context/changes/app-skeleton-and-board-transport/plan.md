@@ -428,25 +428,25 @@ No database and no persisted state, so nothing to unwind. Two things change for 
 
 #### Automated
 
-- [x] 3.1 Config tests pass, including `idotmatrix` without `IDOT_MAC` failing at construction
-- [x] 3.2 Application tests pass: the stub lifespan pushes exactly one frame and `/healthz` returns 200
-- [x] 3.3 A transport whose `connect` raises leaves `/healthz` answering 200
-- [x] 3.4 The whole suite is green
+- [x] 3.1 Config tests pass, including `idotmatrix` without `IDOT_MAC` failing at construction -- 0a1deb1
+- [x] 3.2 Application tests pass: the stub lifespan pushes exactly one frame and `/healthz` returns 200 -- 0a1deb1
+- [x] 3.3 A transport whose `connect` raises leaves `/healthz` answering 200 -- 0a1deb1
+- [x] 3.4 The whole suite is green -- 0a1deb1
 
 #### Manual
 
-- [x] 3.5 `python -m spotify_to_led.main` with the stub starts, writes the PNG, answers `/healthz`, and shuts down with no traceback
+- [x] 3.5 `python -m spotify_to_led.main` with the stub starts, writes the PNG, answers `/healthz`, and shuts down with no traceback -- 0a1deb1
 
 ### Phase 4: The real Bluetooth transport
 
 #### Automated
 
-- [ ] 4.1 The factory returns the real adapter for `BOARD_TRANSPORT=idotmatrix` with no Bluetooth activity
-- [ ] 4.2 The whole suite is still green
+- [x] 4.1 The factory returns the real adapter for `BOARD_TRANSPORT=idotmatrix` with no Bluetooth activity
+- [x] 4.2 The whole suite is still green
 
 #### Manual
 
-- [ ] 4.3 The adapter sets `install_signal_handlers=False`, `set_auto_reconnect(True)` and the configured heartbeat
+- [x] 4.3 The adapter sets `install_signal_handlers=False`, `set_auto_reconnect(True)` and the configured heartbeat
 
 ### Phase 5: Pi smoke test and recorded outcome
 

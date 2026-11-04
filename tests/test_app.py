@@ -154,8 +154,23 @@ async def test_the_factory_builds_a_stub_that_writes_where_settings_say(
         assert image.size == (16, 16)
 
 
-def test_the_factory_refuses_the_idotmatrix_transport_for_now() -> None:
-    settings = Settings(_env_file=None, board_transport="idotmatrix", idot_mac=A_MAC)
+def test_the_factory_wires_the_idotmatrix_adapter_without_touching_bluetooth() -> None:
+    # Imported here for the same reason the factory does it: the hardware
+    # adapter's module is only reachable when its branch is exercised.
+    from spotify_to_led.board.idotmatrix_transport import IDotMatrixBoardTransport
 
-    with pytest.raises(NotImplementedError):
-        create_transport(settings)
+    settings = Settings(
+        _env_file=None,
+        board_transport="idotmatrix",
+        idot_mac=A_MAC,
+        board_size=16,
+    )
+
+    transport = create_transport(settings)
+
+    assert isinstance(transport, IDotMatrixBoardTransport)
+    assert transport._client.mac_address == A_MAC
+    assert transport._client.screen_size.value == (16, 16)
+    # Nothing connected, scanned or awaited: the link is only reported up once
+    # the library's own connection listener fires.
+    assert transport.link_state is LinkState.DOWN
