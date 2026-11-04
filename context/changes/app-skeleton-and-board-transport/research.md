@@ -6,8 +6,8 @@ branch: cez/f82e738d
 repository: spotify-to-led
 topic: "Which idotmatrix implementation should F-01 pin, and what does it mean for the board transport interface?"
 tags: [research, board-transport, idotmatrix, bleak, python-3.14]
-status: partial
-last_updated: 2026-11-03
+status: complete
+last_updated: 2026-11-04
 last_updated_by: pawel (via Claude)
 ---
 
@@ -77,7 +77,13 @@ None for board transport under `context/changes/` or `context/archive/`.
 
 ## Open Questions
 
-1. Does `uv add idotmatrix-api-client` resolve and import on Python 3.14 on the dev laptop, and on aarch64 Trixie (wheels for `cryptography`, `pillow`, `bleak` dependencies such as `dbus-fast`)? Not tested. First step of the F-01 smoke test.
-2. Does a 32x32 board work end to end on BlueZ with this fork (only 64x64 is verified there)? Needs the real board; roadmap open question 4 also needs it.
-3. Is the owner fine with GPL-3.0 dependency and with moving off the roadmap's "start with 0.0.9" default? Owner decision.
-4. `brmk` fork and `pracucci/idotmatrix-overclocked` were not evaluated; unlikely to beat a maintained, 3.14-CI fork but not ruled out.
+All four were closed during F-01 (`app-skeleton-and-board-transport`), 2026-11-04.
+
+1. ~~Does `uv add idotmatrix-api-client` resolve and import on Python 3.14 on the dev laptop, and on aarch64 Trixie?~~ **ANSWERED: yes, both.** `idotmatrix-api-client==0.3.0` resolves and imports on CPython 3.14 on the dev machine (x86-64 Windows) and on the Pi's aarch64 Trixie. Nothing needed compiling: `cryptography` 50.0.2, `pillow` 13.0.0, `dbus-fast` 5.2.0 and `watchdog` 7.0.0 all have prebuilt aarch64 wheels in the committed lock, and `bleak` 3.0.2 is pure Python. `uv sync --frozen` against that lock succeeded on the Pi and the suite passed there.
+2. ~~Does a 32x32 board work end to end on BlueZ with this fork (only 64x64 is verified there)?~~ **ANSWERED: yes.** Driven from the Pi, a real 32x32 board displayed the four-quadrant test pattern with correct orientation and channel order (red, green, blue, white in the top-left, top-right, bottom-left and bottom-right quadrants), which confirms row-major pixel order and RGB channel order on the wire. A board power-cycle was also observed to disconnect, retry after the library's 5-second initial delay and re-establish the link, with the 30-second heartbeat resuming afterwards. The backoff ceiling was not exercised, because the first retry succeeded.
+3. ~~Is the owner fine with a GPL-3.0 dependency and with moving off the roadmap's "start with 0.0.9" default?~~ **ANSWERED: yes to both.** Recorded in `context/foundation/tech-stack.md`: the PRD's non-goals rule out distributing this software, so the licence's distribution obligations are never triggered. 0.0.9 was not adopted at all; 0.3.0 was pinned directly.
+4. ~~`brmk` fork and `pracucci/idotmatrix-overclocked` were not evaluated.~~ **CLOSED BY DECISION, not evaluated.** Judged not worth the work: the `BoardTransport` interface makes a later swap a one-file change, which was the entire point of building it, and 0.3.0 is proven on the target hardware.
+
+### Found during the hardware run, not an original question
+
+The library's reconnect restores the *link* but nothing re-pushes a frame, so after a drop and recovery the board keeps displaying the frame it had, unmarked, on a healthy link. That is correct for F-01, which pushes exactly one frame by design, but it is a concrete FR-018 hazard for `S-03` (`bluetooth-link-self-recovery`), whose stated outcome is that the service "resumes the correct display". The PRD's non-goal carve-out covers the window while the board is *unreachable*; it does not cover a recovered link still showing an unvouched frame.

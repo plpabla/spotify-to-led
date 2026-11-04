@@ -6,7 +6,7 @@ created: 2026-11-03
 updated: 2026-11-04
 prd_version: 1
 main_goal: quality
-top_blocker: external
+top_blocker: decisions
 milestone_id: unattended-truthful-board
 milestone_seq: 1
 milestone_status: open
@@ -128,18 +128,19 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Change ID:** `app-skeleton-and-board-transport`
 - **PRD refs:** FR-012, FR-016
 - **Unlocks:** `S-01` and `S-02` directly, and every slice downstream of them -- nothing can be
-  planned against a `print()` placeholder. Reduces the open unknown "is `idotmatrix` 0.0.9 usable
-  on Python 3.14, and which of the three forks" to a one-file swap behind the interface. Creates
+  planned against a `print()` placeholder. Reduced the unknown "is `idotmatrix` 0.0.9 usable
+  on Python 3.14, and which of the three forks" to a one-file swap behind the interface, and then
+  closed it outright: `idotmatrix-api-client` 0.3.0 is pinned and proven on the board (2026-11-04). Creates
   the verification path FR-016 names: the laptop loop runs the Spotify and rendering layers at
   full fidelity against the stub, with no board attached.
 - **Prerequisites:** --
 - **Parallel with:** F-03
 - **Blockers:** --
 - **Unknowns:**
-  - Which `idotmatrix` implementation to pin -- PyPI 0.0.9 or one of the three named forks
-    (`markusressel`, `brmk`, `derkalle4`), which have divergent APIs. Owner. Block: no -- the
-    transport interface is exactly what makes this reversible, and pinning 0.0.9 to start is
-    enough to proceed.
+  - ~~Which `idotmatrix` implementation to pin~~ -- RESOLVED 2026-11-04: `idotmatrix-api-client`
+    0.3.0, pinned exactly, proven on the Pi against a real 32x32 board. Neither 0.0.9 nor the
+    `brmk` / `derkalle4` forks were adopted, and no further fork evaluation was done: the transport
+    interface makes a later swap a one-file change, which was the point of building it.
 - **Risk:** Sequenced first because it is the only item with no prerequisites that everything else
   needs, and because it is where the `top_blocker: external` risk gets contained. The thing that
   could go wrong is scope: this must stay a skeleton plus one interface and a single-frame smoke
@@ -266,7 +267,17 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Prerequisites:** S-02
 - **Parallel with:** S-04
 - **Blockers:** --
-- **Unknowns:** --
+- **Unknowns:**
+  - Reconnect restores the link but nothing re-pushes a frame. Observed on hardware during F-01,
+    2026-11-04: the board was switched off for ~30 seconds, the library reconnected on its own
+    after its 5-second initial delay, the 30-second heartbeat resumed, and the panel went on
+    showing the frame it already had, unmarked, for at least two minutes on a healthy link. F-01
+    pushes exactly one frame by design, so this is not a defect there, but it is the concrete
+    reason this item's outcome says "resumes the correct display" rather than just "re-establishes
+    the link". Note the FR-018 edge: the PRD's non-goal carve-out covers the window while the board
+    is *unreachable*, and does not cover a recovered link still presenting an unvouched frame. The
+    library exposes `ConnectionListener(on_connected=...)`, which already fires on reconnect, so
+    the hook to re-push from exists.
 - **Risk:** Separated from S-02 because it is its own success criterion ("the Bluetooth link to the
   board recovers on its own after a drop") and its own failure surface, and because it is testable
   only by physically interfering with the board. The PRD accepts this as unbounded -- no limit on
@@ -408,11 +419,16 @@ Foundations below assume these are present and do NOT re-scaffold them.
    not on paper.
 5. **Track artwork or album artwork?** -- Owner. Block: none; gates `S-04`. FR-017's cache shape
    was chosen so this does not need answering first.
-6. **Which `idotmatrix` implementation gets pinned?** -- Owner. Block: none; affects `F-01`.
-   PyPI 0.0.9 has had no release since 2025-04-13, declares no `requires-python`, carries a junk
-   `asyncio` dependency pin, and has never been tested against the Python 3.14 the stack mandates.
-   Three forks exist with divergent APIs. This is the roadmap's `top_blocker: external` in concrete
-   form, and F-01's transport interface is the mitigation.
+6. **Which `idotmatrix` implementation gets pinned?** -- RESOLVED 2026-11-04:
+   `idotmatrix-api-client` 0.3.0, pinned exactly. It is the maintained fork, published under its own
+   name, declaring `>=3.12,<3.15` and carrying no junk `asyncio` pin. Evidence is hardware, not
+   paper: on the Pi's aarch64 under CPython 3.14 it drove a real 32x32 board over BlueZ, showing the
+   four-quadrant test pattern with correct orientation and channel order, and recovered the link
+   after a board power-cycle. The original concern is kept below for the record.
+   PyPI 0.0.9 had no release since 2025-04-13, declared no `requires-python`, carried a junk
+   `asyncio` dependency pin, and had never been tested against the Python 3.14 the stack mandates.
+   Three forks existed with divergent APIs. This was the roadmap's `top_blocker: external` in
+   concrete form, and F-01's transport interface is the mitigation that made it reversible.
 7. **Does the Pi have a reserved DHCP lease or a static IP?** -- Owner. Block: none; affects
    `F-03`. Required by the recommended Option A wiring, which pins the public hostname to the Pi's
    LAN address. Not observable from this repository.
