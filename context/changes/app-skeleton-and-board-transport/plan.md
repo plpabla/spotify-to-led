@@ -402,14 +402,14 @@ No database and no persisted state, so nothing to unwind. Two things change for 
 
 #### Automated
 
-- [x] 1.1 `uv sync` resolves and the lock pins `idotmatrix-api-client` 0.3.0
-- [x] 1.2 The library imports on Python 3.14 and `ScreenSize.SIZE_32x32` is `(32, 32)`
-- [x] 1.3 The test runner is configured and collects cleanly
+- [x] 1.1 `uv sync` resolves and the lock pins `idotmatrix-api-client` 0.3.0 -- fdcd51f
+- [x] 1.2 The library imports on Python 3.14 and `ScreenSize.SIZE_32x32` is `(32, 32)` -- fdcd51f
+- [x] 1.3 The test runner is configured and collects cleanly -- fdcd51f
 
 #### Manual
 
-- [ ] 1.4 The same import succeeds on the Pi's aarch64 after `uv sync` (closes research open question 1)
-- [ ] 1.5 `tech-stack.md` and `infrastructure.md` record the pin, the GPL-3.0 acceptance and the pytest choice
+- [x] 1.4 The same import succeeds on the Pi's aarch64 after `uv sync` (closes research open question 1) -- fdcd51f
+- [x] 1.5 `tech-stack.md` and `infrastructure.md` record the pin, the GPL-3.0 acceptance and the pytest choice -- fdcd51f
 
 ### Phase 2: Frame contract, transport interface, PNG stub
 
