@@ -415,10 +415,10 @@ No database and no persisted state, so nothing to unwind. Two things change for 
 
 #### Automated
 
-- [ ] 2.1 Stub and frame tests pass
-- [ ] 2.2 A push writes a readable 32x32 RGB PNG at the configured path
-- [ ] 2.3 A wrong-size or wrong-mode image is rejected with `ValueError`
-- [ ] 2.4 `frame_to_pixel_colors` returns 1024 row-major triples whose corners match the pattern
+- [x] 2.1 Stub and frame tests pass
+- [x] 2.2 A push writes a readable 32x32 RGB PNG at the configured path
+- [x] 2.3 A wrong-size or wrong-mode image is rejected with `ValueError`
+- [x] 2.4 `frame_to_pixel_colors` returns 1024 row-major triples whose corners match the pattern
 
 #### Manual
 
