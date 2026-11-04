@@ -415,10 +415,10 @@ No database and no persisted state, so nothing to unwind. Two things change for 
 
 #### Automated
 
-- [x] 2.1 Stub and frame tests pass
-- [x] 2.2 A push writes a readable 32x32 RGB PNG at the configured path
-- [x] 2.3 A wrong-size or wrong-mode image is rejected with `ValueError`
-- [x] 2.4 `frame_to_pixel_colors` returns 1024 row-major triples whose corners match the pattern
+- [x] 2.1 Stub and frame tests pass -- 072979e
+- [x] 2.2 A push writes a readable 32x32 RGB PNG at the configured path -- 072979e
+- [x] 2.3 A wrong-size or wrong-mode image is rejected with `ValueError` -- 072979e
+- [x] 2.4 `frame_to_pixel_colors` returns 1024 row-major triples whose corners match the pattern -- 072979e
 
 #### Manual
 
@@ -428,14 +428,14 @@ No database and no persisted state, so nothing to unwind. Two things change for 
 
 #### Automated
 
-- [ ] 3.1 Config tests pass, including `idotmatrix` without `IDOT_MAC` failing at construction
-- [ ] 3.2 Application tests pass: the stub lifespan pushes exactly one frame and `/healthz` returns 200
-- [ ] 3.3 A transport whose `connect` raises leaves `/healthz` answering 200
-- [ ] 3.4 The whole suite is green
+- [x] 3.1 Config tests pass, including `idotmatrix` without `IDOT_MAC` failing at construction
+- [x] 3.2 Application tests pass: the stub lifespan pushes exactly one frame and `/healthz` returns 200
+- [x] 3.3 A transport whose `connect` raises leaves `/healthz` answering 200
+- [x] 3.4 The whole suite is green
 
 #### Manual
 
-- [ ] 3.5 `python -m spotify_to_led.main` with the stub starts, writes the PNG, answers `/healthz`, and shuts down with no traceback
+- [x] 3.5 `python -m spotify_to_led.main` with the stub starts, writes the PNG, answers `/healthz`, and shuts down with no traceback
 
 ### Phase 4: The real Bluetooth transport
 

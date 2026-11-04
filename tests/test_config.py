@@ -1,0 +1,91 @@
+"""The one place environment configuration enters the process.
+
+Every test here is hermetic: the `clean_env` fixture removes the keys
+`Settings` reads and each construction either passes `_env_file=None` or names
+its own file, so the repository's real `.env` cannot change a result on a
+development machine.
+"""
+
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from spotify_to_led.config import Settings
+
+SETTING_KEYS = (
+    "BOARD_TRANSPORT",
+    "IDOT_MAC",
+    "BOARD_SIZE",
+    "BOARD_HEARTBEAT_SECONDS",
+    "STUB_FRAME_DIR",
+    "HOST",
+    "PORT",
+    "LOG_LEVEL",
+)
+
+A_MAC = "11:22:33:44:55:66"
+
+
+@pytest.fixture
+def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove every key `Settings` reads, so defaults are really defaults."""
+    for key in SETTING_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_defaults_are_the_safe_stub_configuration(clean_env: None) -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.board_transport == "stub"
+    assert settings.idot_mac is None
+    assert settings.board_size == 32
+    assert settings.board_heartbeat_seconds == 30.0
+    assert settings.stub_frame_dir == Path("var/frames")
+    assert settings.host == "127.0.0.1"
+    assert settings.port == 8000
+    assert settings.log_level == "INFO"
+
+
+def test_idot_mac_is_read_from_the_environment(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Upper case key, lower case field: the match has to be case-insensitive,
+    # because the key already exists in that spelling.
+    monkeypatch.setenv("IDOT_MAC", A_MAC)
+
+    assert Settings(_env_file=None).idot_mac == A_MAC
+
+
+def test_idot_mac_is_read_from_a_dotenv_file(clean_env: None, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"IDOT_MAC={A_MAC}\n", encoding="utf-8")
+
+    assert Settings(_env_file=env_file).idot_mac == A_MAC
+
+
+def test_a_dotenv_file_may_carry_keys_that_are_not_settings(
+    clean_env: None, tmp_path: Path
+) -> None:
+    # A stray key must not take the whole process down at startup.
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"IDOT_MAC={A_MAC}\nSOMETHING_ELSE=1\n", encoding="utf-8")
+
+    assert Settings(_env_file=env_file).idot_mac == A_MAC
+
+
+def test_idotmatrix_without_a_mac_is_rejected_at_construction(clean_env: None) -> None:
+    with pytest.raises(ValidationError, match="idot_mac"):
+        Settings(_env_file=None, board_transport="idotmatrix")
+
+
+def test_idotmatrix_with_a_mac_is_accepted(clean_env: None) -> None:
+    settings = Settings(_env_file=None, board_transport="idotmatrix", idot_mac=A_MAC)
+
+    assert settings.board_transport == "idotmatrix"
+    assert settings.idot_mac == A_MAC
+
+
+def test_an_unknown_transport_is_rejected(clean_env: None) -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, board_transport="carrier-pigeon")
