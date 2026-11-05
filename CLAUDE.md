@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-`spotify-to-led` is a single-tenant Python 3.14 / FastAPI background service that mirrors the artwork of the currently-playing Spotify item onto an iDotMatrix LED board over Bluetooth, running on a Raspberry Pi. It is pre-implementation: `src/spotify_to_led/main.py` is still the uv placeholder.
+`spotify-to-led` is a single-tenant Python 3.14 / FastAPI background service that mirrors the artwork of the currently-playing Spotify item onto an iDotMatrix LED board over Bluetooth, running on a Raspberry Pi. `src/spotify_to_led/main.py` is the real entrypoint: a FastAPI `app` whose lifespan builds a board transport from settings, pushes one frame in a supervised background task, and serves `GET /healthz`. Spotify, cover rendering and the status page are not built yet.
 
 ## Hard rules
 
@@ -30,8 +30,8 @@ Python >= 3.14; annotate new code, per the `typed: true` self-check in @context/
 
 ## Testing
 
-No test suite, framework or CI workflow exists yet. When introducing the first one, record the choice in `context/foundation/` rather than only in `pyproject.toml`.
+The test runner is pytest with pytest-asyncio, configured under `[tool.pytest.ini_options]` in `pyproject.toml` with `asyncio_mode = "auto"`, so async tests need no decorator. Run it with `uv run pytest`. The choice is recorded in @context/foundation/tech-stack.md, which is where a future runner or CI change belongs too, rather than only in `pyproject.toml`. No CI workflow exists yet.
 
 ## Commits
 
-No remote is configured. `git log` shows short lowercase subjects ("prd and hello-world in place"); match that plain style. Conventional Commit prefixes are not in use.
+`origin` is `git@github.com:plpabla/spotify-to-led.git`, a public GitHub repository. `git log` shows short lowercase subjects ("prd and hello-world in place"); match that plain style. Conventional Commit prefixes are not in use.
