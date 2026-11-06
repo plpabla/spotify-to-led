@@ -19,13 +19,13 @@ from fastapi import FastAPI
 from spotify_to_led import frames
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.transport import BoardTransport
-from spotify_to_led.config import Settings
+from spotify_to_led.config import load_settings
 
 logger = logging.getLogger(__name__)
 
 
 def configure_logging(level: str) -> None:
-    """Send the root logger to stdout at `level`, so journald captures it."""
+    """Send the root logger to stdout at `level`, so pm2's log files capture it."""
     logging.basicConfig(
         level=level.upper(),
         stream=sys.stdout,
@@ -49,7 +49,7 @@ async def push_test_pattern(transport: BoardTransport, size: int) -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Own the transport and the one background task for the process lifetime."""
-    settings = Settings()
+    settings = load_settings()
     configure_logging(settings.log_level)
     transport = create_transport(settings)
     task = asyncio.create_task(push_test_pattern(transport, settings.board_size))
@@ -66,8 +66,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception:
             # Same reasoning as the task's own guard: a board fault is reported,
             # never raised. Escaping here would put a traceback in the shutdown
-            # log on every unclean teardown, which is noise in the exact journal
-            # the unattended run is read from.
+            # log on every unclean teardown, which is noise in the exact log the
+            # unattended run is read from.
             logger.exception("closing the board transport failed")
 
 
@@ -86,7 +86,7 @@ async def healthz() -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    # infrastructure.md's unit file runs `python -m spotify_to_led.main`, so
-    # this invocation has to keep working.
-    startup_settings = Settings()
+    # ecosystem.config.js runs `python -m spotify_to_led.main`, so this
+    # invocation has to keep working.
+    startup_settings = load_settings()
     uvicorn.run(app, host=startup_settings.host, port=startup_settings.port)

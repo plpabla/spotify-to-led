@@ -311,27 +311,27 @@ Rollback of the supervisor change: `pm2 delete spotify-to-led && pm2 save`. The 
 
 #### Automated
 
-- [x] 1.1 Branch is renamed: `git branch --show-current` prints `feat/pm2-supervised-service`
-- [x] 1.2 No foundation doc names the old change id: `git grep -n "systemd-unit-and-persistent-logs" -- context/foundation` prints nothing
-- [x] 1.3 Each superseded spot carries a dated note: `grep -c "Superseded, 2026-11-06" context/foundation/infrastructure.md` is at least 8 and `context/foundation/tech-stack.md` has at least 1
+- [x] 1.1 Branch is renamed: `git branch --show-current` prints `feat/pm2-supervised-service` -- 381fcbd
+- [x] 1.2 No foundation doc names the old change id: `git grep -n "systemd-unit-and-persistent-logs" -- context/foundation` prints nothing -- 381fcbd
+- [x] 1.3 Each superseded spot carries a dated note: `grep -c "Superseded, 2026-11-06" context/foundation/infrastructure.md` is at least 8 and `context/foundation/tech-stack.md` has at least 1 -- 381fcbd
 
 #### Manual
 
-- [x] 1.4 Reading `infrastructure.md` top to bottom, a newcomer ends up with pm2 as the supervisor and understands why systemd was reversed, without contradicting statements left unmarked
+- [x] 1.4 Reading `infrastructure.md` top to bottom, a newcomer ends up with pm2 as the supervisor and understands why systemd was reversed, without contradicting statements left unmarked -- 381fcbd
 
 ### Phase 2: Repo artifacts
 
 #### Automated
 
-- [ ] 2.1 Test suite passes, including the new selector cases: `uv run pytest`
-- [ ] 2.2 Ecosystem file parses: `node --check ecosystem.config.js`
-- [ ] 2.3 Ecosystem file loads with the agreed policy
-- [ ] 2.4 Deploy script parses: `bash -n scripts/deploy.sh`
-- [ ] 2.5 No journald or EnvironmentFile wording left in code: `git grep -nE "journald|EnvironmentFile|unit file" -- src` prints nothing
+- [x] 2.1 Test suite passes, including the new selector cases: `uv run pytest`
+- [x] 2.2 Ecosystem file parses: `node --check ecosystem.config.js`
+- [x] 2.3 Ecosystem file loads with the agreed policy
+- [x] 2.4 Deploy script parses: `bash -n scripts/deploy.sh`
+- [x] 2.5 No journald or EnvironmentFile wording left in code: `git grep -nE "journald|EnvironmentFile|unit file" -- src` prints nothing
 
 #### Manual
 
-- [ ] 2.6 Locally, `SPOTIFY_TO_LED_ENV_FILE=does-not-exist uv run python -m spotify_to_led.main` fails at startup with a message that names the path
+- [x] 2.6 Locally, `SPOTIFY_TO_LED_ENV_FILE=does-not-exist uv run python -m spotify_to_led.main` fails at startup with a message that names the path
 
 ### Phase 3: Pi rollout
 
