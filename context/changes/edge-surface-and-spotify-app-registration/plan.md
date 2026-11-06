@@ -341,9 +341,9 @@ None. Rollback: first delete the DNS record for `<sub>.<owner-domain>` in the Cl
 
 #### Automated
 
-- [x] 4.1 `git diff main --name-only` lists only files under `context/`
-- [x] 4.2 `git grep` over the change folder prints nothing (no real Access team domain or private LAN IP)
+- [x] 4.1 `git diff main --name-only` lists only files under `context/` -- 955707c
+- [x] 4.2 `git grep` over the change folder prints nothing (no real Access team domain or private LAN IP) -- 955707c
 
 #### Manual
 
-- [x] 4.3 The owner skims `verification.md` and confirms no real subdomain, domain, client ID or LAN IP appears in it, and that it matches what was configured
+- [x] 4.3 The owner skims `verification.md` and confirms no real subdomain, domain, client ID or LAN IP appears in it, and that it matches what was configured -- 955707c
