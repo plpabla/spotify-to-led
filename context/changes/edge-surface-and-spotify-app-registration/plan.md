@@ -301,29 +301,29 @@ None. Rollback: first delete the DNS record for `<sub>.<owner-domain>` in the Cl
 
 #### Automated
 
-- [x] 1.1 On the Pi, `curl -s http://localhost:8000/healthz` returns `{"status":"ok"}`
-- [x] 1.2 On the Pi, `ss -ltn | grep ':8000'` shows exactly one listener, on `127.0.0.1:8000`
-- [x] 1.3 On the Pi, `cloudflared` runs natively or with host networking
+- [x] 1.1 On the Pi, `curl -s http://localhost:8000/healthz` returns `{"status":"ok"}` -- 54a13dd
+- [x] 1.2 On the Pi, `ss -ltn | grep ':8000'` shows exactly one listener, on `127.0.0.1:8000` -- 54a13dd
+- [x] 1.3 On the Pi, `cloudflared` runs natively or with host networking -- 54a13dd
 
 #### Manual
 
-- [x] 1.4 From a browser on another LAN machine, `http://pi-n8n.local:8000/healthz` does not load
+- [x] 1.4 From a browser on another LAN machine, `http://pi-n8n.local:8000/healthz` does not load -- 54a13dd
 
 ### Phase 2: Cloudflare edge, gate first
 
 #### Automated
 
-- [ ] 2.1 `curl -sI https://<sub>.<owner-domain>/healthz` (no cookie) returns a `302` whose `Location` points at `<team>.cloudflareaccess.com`
-- [ ] 2.2 `curl -sI https://<sub>.<owner-domain>/callback?code=x` (no cookie) returns the same Access redirect
-- [ ] 2.7 On the Pi, `cloudflared tunnel ingress validate` reports the config as valid
-- [ ] 2.8 On the Pi, `cloudflared tunnel ingress rule https://<sub>.<owner-domain>` selects the `http://localhost:8000` rule
+- [x] 2.1 `curl -sI https://<sub>.<owner-domain>/healthz` (no cookie) returns a `302` whose `Location` points at `<team>.cloudflareaccess.com`
+- [x] 2.2 `curl -sI https://<sub>.<owner-domain>/callback?code=x` (no cookie) returns the same Access redirect
+- [x] 2.7 On the Pi, `cloudflared tunnel ingress validate` reports the config as valid
+- [x] 2.8 On the Pi, `cloudflared tunnel ingress rule https://<sub>.<owner-domain>` selects the `http://localhost:8000` rule
 
 #### Manual
 
-- [ ] 2.3 In a browser logged in through Access, `https://<sub>.<owner-domain>/healthz` shows `{"status":"ok"}`, and the Pi's console logs the request
+- [x] 2.3 In a browser logged in through Access, `https://<sub>.<owner-domain>/healthz` shows `{"status":"ok"}`, and the Pi's console logs the request
 - [ ] 2.4 In a private window, the same URL shows the Access login page, and it loads after the owner logs in
 - [ ] 2.5 A login attempt with an email other than the owner's is refused
-- [ ] 2.6 n8n still works as before (its hostname, its Access gate)
+- [x] 2.6 n8n still works as before (its hostname, its Access gate)
 
 ### Phase 3: Spotify app registration
 
