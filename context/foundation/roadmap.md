@@ -3,7 +3,7 @@ project: spotify-to-led
 version: 1
 status: draft
 created: 2026-11-03
-updated: 2026-11-05
+updated: 2026-11-06
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -70,7 +70,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | ---- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------- | -------- |
 | F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | done        |
 | F-02 | `systemd-unit-and-persistent-logs`          | (foundation) the service is supervised by a Trixie-correct systemd unit whose logs survive a reboot         | F-01             | FR-014, NFR-02                                  | proposed |
-| F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | in-progress |
+| F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | done        |
 | S-01 | `spotify-authorization-and-playback-read`   | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | proposed |
 | S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | proposed |
 | S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | proposed |
@@ -206,7 +206,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   `localhost` service definition would resolve to the n8n box on some requests and the Pi on
   others, producing an intermittently wrong origin instead of a clean failure. Sequenced in
   parallel with F-01 because it is the item whose lead time is outside the owner's keyboard.
-- **Status:** in-progress
+- **Status:** done
 
 ## Slices
 
@@ -481,3 +481,7 @@ closes.)
   push a single 32x32 frame to the board through one transport interface that has both a real
   Bluetooth implementation and a stub that writes the frame to a PNG** -- Archived 2026-11-04 ->
   `context/archive/2026-11-03-app-skeleton-and-board-transport/`. Lesson: --.
+- **F-03: (foundation) the project's subdomain resolves to the Pi through the connector that
+  already runs on this network, is gated by its own Cloudflare Access application scoped to the
+  owner, and is registered with Spotify as an exact-match redirect URI** -- Archived 2026-11-06 ->
+  `context/archive/2026-11-05-edge-surface-and-spotify-app-registration/`. Lesson: --.

@@ -1,10 +1,10 @@
 ---
 change_id: edge-surface-and-spotify-app-registration
 title: Publish and gate the service hostname, and register the Spotify redirect URI
-status: impl_reviewed
+status: archived
 created: 2026-11-05
 updated: 2026-11-06
-archived_at: null
+archived_at: 2026-11-06T15:03:42Z
 ---
 
 ## Notes
