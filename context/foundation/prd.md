@@ -267,7 +267,7 @@ What this project **does** have to do, because none of it is inherited from the 
 
 - Add a public hostname route for this project's subdomain on the existing connector, pointing at the Pi.
 - Add a Cloudflare Access application for that hostname. Access applications are per-hostname, so the policy protecting n8n does not extend to this one. This page has no login of its own, unlike n8n, so that policy is its only gate.
-- Reserve a DHCP lease or assign a static IP for the Pi, since the hostname route is pinned to its LAN address.
+- Reserve a DHCP lease or assign a static IP for the Pi, since the hostname route is pinned to its LAN address. Not needed, 2026-11-06: the tunnel connector runs on the Pi itself, so the route targets `localhost` and the Pi's LAN address is irrelevant to it.
 - Register `https://<sub>.<owner-domain>/callback` as a redirect URI in the Spotify app settings.
 
 These four belong in the setup steps for the roadmap and plan steps. They are the deltas between "the domain is already behind Cloudflare" and "this project's page is reachable and gated".

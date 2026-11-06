@@ -3,7 +3,7 @@ project: spotify-to-led
 version: 1
 status: draft
 created: 2026-11-03
-updated: 2026-11-04
+updated: 2026-11-06
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -70,7 +70,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | ---- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------- | -------- |
 | F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | done        |
 | F-02 | `systemd-unit-and-persistent-logs`          | (foundation) the service is supervised by a Trixie-correct systemd unit whose logs survive a reboot         | F-01             | FR-014, NFR-02                                  | proposed |
-| F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | ready    |
+| F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | done        |
 | S-01 | `spotify-authorization-and-playback-read`   | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | proposed |
 | S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | proposed |
 | S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | proposed |
@@ -195,7 +195,8 @@ Foundations below assume these are present and do NOT re-scaffold them.
   completing an OAuth consent." These are outward-facing and affect a domain shared with a live
   n8n deployment.
 - **Unknowns:**
-  - Does the Pi have a reserved DHCP lease or a static IP? Owner. Block: no -- a router setting,
+  - ~~Does the Pi have a reserved DHCP lease or a static IP?~~ -- RESOLVED 2026-11-06: not needed,
+    because the connector runs on the Pi and routes to `localhost`. Owner. Block: no -- a router setting,
     and Option B (a separate connector on the Pi) is the documented fallback. Worth resolving
     early anyway: if the Pi's address moves, re-authorization breaks silently while the board
     keeps working, which the research calls the most confusing possible failure mode here.
@@ -205,7 +206,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   `localhost` service definition would resolve to the n8n box on some requests and the Pi on
   others, producing an intermittently wrong origin instead of a clean failure. Sequenced in
   parallel with F-01 because it is the item whose lead time is outside the owner's keyboard.
-- **Status:** ready
+- **Status:** done
 
 ## Slices
 
@@ -230,7 +231,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
   the Pi, and uvicorn only trusts forwarded headers from `127.0.0.1`, so a derived redirect URI
   becomes `http://192.168.x.x:8000/callback` and Spotify rejects it in a way that presents as a
   Spotify fault. Also note the one-off trap that an Access session expiring mid-consent can strand
-  the authorization code on a login page; re-running the flow fixes it.
+  the authorization code on a login page; re-running the flow fixes it. Superseded, 2026-11-06:
+  F-03 found the connector runs on the Pi and routes to `localhost:8000`, so the forwarded-header
+  trap no longer applies; pinning the redirect URI from `SPOTIFY_REDIRECT_URI` still stands.
 - **Status:** proposed
 
 ### S-02: Board shows the idle display, unattended, across a cold boot
@@ -429,7 +432,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
    `asyncio` dependency pin, and had never been tested against the Python 3.14 the stack mandates.
    Three forks existed with divergent APIs. This was the roadmap's `top_blocker: external` in
    concrete form, and F-01's transport interface is the mitigation that made it reversible.
-7. **Does the Pi have a reserved DHCP lease or a static IP?** -- Owner. Block: none; affects
+7. **Does the Pi have a reserved DHCP lease or a static IP?** -- RESOLVED 2026-11-06 -- no
+   reservation is needed: the tunnel connector runs on the Pi itself and the route targets
+   `localhost:8000`. The original question is kept below for the record. Owner. Block: none; affects
    `F-03`. Required by the recommended Option A wiring, which pins the public hostname to the Pi's
    LAN address. Not observable from this repository.
 
@@ -476,3 +481,7 @@ closes.)
   push a single 32x32 frame to the board through one transport interface that has both a real
   Bluetooth implementation and a stub that writes the frame to a PNG** -- Archived 2026-11-04 ->
   `context/archive/2026-11-03-app-skeleton-and-board-transport/`. Lesson: --.
+- **F-03: (foundation) the project's subdomain resolves to the Pi through the connector that
+  already runs on this network, is gated by its own Cloudflare Access application scoped to the
+  owner, and is registered with Spotify as an exact-match redirect URI** -- Archived 2026-11-06 ->
+  `context/archive/2026-11-05-edge-surface-and-spotify-app-registration/`. Lesson: --.
