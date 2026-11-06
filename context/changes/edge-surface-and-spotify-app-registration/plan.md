@@ -151,6 +151,8 @@ Create the Access application for the new subdomain, then add an ingress rule to
 
 Create a dedicated Spotify Development Mode app with the exact callback URI, and stash the values S-01 needs on the Pi. This phase is independent of Phases 1 and 2 and can run in parallel with them.
 
+> Addendum 2026-11-06 (implementation review F3): Phase 3 also added `.env.example` at the repo root, documenting every `Settings` key plus `SPOTIFY_CLIENT_ID` and `SPOTIFY_REDIRECT_URI` with placeholder values only (`led.example.com`). It is the one non-`context/` path accepted by Phase 4's gate 4.1.
+
 ### Changes Required:
 
 #### 1. Spotify developer app

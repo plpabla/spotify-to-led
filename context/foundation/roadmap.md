@@ -231,7 +231,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
   the Pi, and uvicorn only trusts forwarded headers from `127.0.0.1`, so a derived redirect URI
   becomes `http://192.168.x.x:8000/callback` and Spotify rejects it in a way that presents as a
   Spotify fault. Also note the one-off trap that an Access session expiring mid-consent can strand
-  the authorization code on a login page; re-running the flow fixes it.
+  the authorization code on a login page; re-running the flow fixes it. Superseded, 2026-11-06:
+  F-03 found the connector runs on the Pi and routes to `localhost:8000`, so the forwarded-header
+  trap no longer applies; pinning the redirect URI from `SPOTIFY_REDIRECT_URI` still stands.
 - **Status:** proposed
 
 ### S-02: Board shows the idle display, unattended, across a cold boot
