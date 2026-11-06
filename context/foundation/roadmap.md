@@ -69,7 +69,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | ID   | Change ID                                   | Outcome (user can ...)                                                                                      | Prerequisites    | PRD refs                                        | Status   |
 | ---- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------- | -------- |
 | F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | done        |
-| F-02 | `systemd-unit-and-persistent-logs`          | (foundation) the service is supervised by a Trixie-correct systemd unit whose logs survive a reboot         | F-01             | FR-014, NFR-02                                  | proposed |
+| F-02 | `pm2-supervised-service`                    | (foundation) the service is supervised by the Pi's existing pm2 daemon, and its logs survive a reboot       | F-01             | FR-014, NFR-02                                  | in-progress |
 | F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | done        |
 | S-01 | `spotify-authorization-and-playback-read`   | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | proposed |
 | S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | proposed |
@@ -115,6 +115,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Observability:** absent -- declared as journald. Nothing configured, and
   `Storage=persistent` is not set, which `infrastructure.md` flags as the thing that erases the
   evidence for the 7-day requirement.
+- Superseded, 2026-11-06: the supervisor is pm2, not a systemd unit, and the logs are pm2's
+  on-disk files under `~/.pm2/logs`, rotated by pm2-logrotate. journald on the Pi turned out to be
+  persistent by default config anyway. See `infrastructure.md` and F-02.
 - **Incidental:** `.env` already carries `IDOT_MAC`, so the board's Bluetooth address has been
   obtained. That is part of `infrastructure.md`'s Getting Started step 3 already done.
 
@@ -148,30 +151,32 @@ Foundations below assume these are present and do NOT re-scaffold them.
   is the cheapest possible place to discover it.
 - **Status:** done
 
-### F-02: Systemd unit and logs that survive a reboot
+### F-02: Supervised service and logs that survive a reboot
 
-- **Outcome:** (foundation) the service is supervised by a system unit that is correct for
-  Raspberry Pi OS Trixie, cannot be permanently stopped by the start limiter, and writes to a
-  journal that persists across reboots.
-- **Change ID:** `systemd-unit-and-persistent-logs`
+- **Outcome:** (foundation) the service is supervised by the pm2 daemon that already runs
+  `cloudflared` and n8n on the Pi, comes back after a cold boot with no human action, is never
+  marked `errored` and abandoned by pm2's restart limit, and writes rotated logs to disk that
+  persist across reboots.
+- **Change ID:** `pm2-supervised-service`
 - **PRD refs:** FR-014, NFR-02
 - **Unlocks:** `S-02`, the north star -- "resumes after a reboot with no human action" is a
-  sentence about a unit file. Creates the only viable verification path for NFR-02 (the 7-day
-  unattended property): `infrastructure.md` records that on Pi images the journal is frequently
-  RAM-backed, so without `Storage=persistent` the evidence is erased by the very reboot being
-  investigated.
+  sentence about the supervisor's boot path, here `pm2-<user>.service` running `pm2 resurrect`.
+  Creates the only viable verification path for NFR-02 (the 7-day unattended property): logs
+  that are still on disk after the very reboot being investigated, bounded by pm2-logrotate.
 - **Prerequisites:** F-01
 - **Parallel with:** S-01
 - **Blockers:** --
 - **Unknowns:** --
 - **Risk:** `main_goal: quality` is why this is a foundation rather than a tail-end deployment
-  chore. `infrastructure.md`'s pre-mortem is a description of this item being deferred: the unit
-  gets copied from a Bookworm-era post, references `hciuart.service` (removed on Trixie), loses the
-  cold-boot race with BlueZ, burns its five permitted restarts in ten seconds, and systemd gives
-  up -- leaving a two-day-old cover on the board with no marker and no status page to ask, because
-  the page is served by the process that died. The specific guards are known and recorded in the
-  risk register, so the danger is skipping them, not finding them.
-- **Status:** proposed
+  chore. `infrastructure.md`'s pre-mortem is a description of this item being deferred: a startup
+  crash loop burns the supervisor's restart budget and it gives up -- leaving a two-day-old cover
+  on the board with no marker and no status page to ask, because the page is served by the process
+  that died. Under pm2 the guards are exponential backoff (and, if the Pi shows it is needed, a
+  large `max_restarts`), a `kill_timeout` long enough for clean GATT teardown, unbuffered output,
+  `pm2 save` after every change to the app set, and one daemon restart so the app inherits the
+  `bluetooth` group. They are recorded in the risk register, so the danger is skipping them, not
+  finding them.
+- **Status:** in-progress
 
 ### F-03: Edge surface and Spotify app registration
 
@@ -395,7 +400,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 | Roadmap ID | Change ID                                   | Suggested issue title                                                             | Ready for `/10x-plan` | Notes                                                                       |
 | ---------- | ------------------------------------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------- |
 | F-01       | `app-skeleton-and-board-transport`          | Replace the uv placeholder with a service package and a swappable board transport | yes                   | Run `/10x-plan app-skeleton-and-board-transport`                            |
-| F-02       | `systemd-unit-and-persistent-logs`          | Supervise the service with a Trixie-correct systemd unit and persistent journald  | no                    | Needs F-01                                                                  |
+| F-02       | `pm2-supervised-service`                    | Supervise the service under pm2 with rotated logs that survive a reboot           | no                    | Needs F-01                                                                  |
 | F-03       | `edge-surface-and-spotify-app-registration` | Publish and gate the service hostname, and register the Spotify redirect URI      | yes                   | Run `/10x-plan edge-surface-and-spotify-app-registration`. Human-only steps |
 | S-01       | `spotify-authorization-and-playback-read`   | Authorize Spotify once and read currently-playing unattended                      | no                    | Needs F-01, F-03                                                            |
 | S-02       | `unattended-idle-board`                     | Show the idle display unattended, surviving a cold boot                           | no                    | North star. Needs F-02, S-01                                                |
