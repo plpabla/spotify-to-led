@@ -313,29 +313,29 @@ None. Rollback: first delete the DNS record for `<sub>.<owner-domain>` in the Cl
 
 #### Automated
 
-- [x] 2.1 `curl -sI https://<sub>.<owner-domain>/healthz` (no cookie) returns a `302` whose `Location` points at `<team>.cloudflareaccess.com`
-- [x] 2.2 `curl -sI https://<sub>.<owner-domain>/callback?code=x` (no cookie) returns the same Access redirect
-- [x] 2.7 On the Pi, `cloudflared tunnel ingress validate` reports the config as valid
-- [x] 2.8 On the Pi, `cloudflared tunnel ingress rule https://<sub>.<owner-domain>` selects the `http://localhost:8000` rule
+- [x] 2.1 `curl -sI https://<sub>.<owner-domain>/healthz` (no cookie) returns a `302` whose `Location` points at `<team>.cloudflareaccess.com` -- a3628c4
+- [x] 2.2 `curl -sI https://<sub>.<owner-domain>/callback?code=x` (no cookie) returns the same Access redirect -- a3628c4
+- [x] 2.7 On the Pi, `cloudflared tunnel ingress validate` reports the config as valid -- a3628c4
+- [x] 2.8 On the Pi, `cloudflared tunnel ingress rule https://<sub>.<owner-domain>` selects the `http://localhost:8000` rule -- a3628c4
 
 #### Manual
 
-- [x] 2.3 In a browser logged in through Access, `https://<sub>.<owner-domain>/healthz` shows `{"status":"ok"}`, and the Pi's console logs the request
+- [x] 2.3 In a browser logged in through Access, `https://<sub>.<owner-domain>/healthz` shows `{"status":"ok"}`, and the Pi's console logs the request -- a3628c4
 - [ ] 2.4 In a private window, the same URL shows the Access login page, and it loads after the owner logs in
 - [ ] 2.5 A login attempt with an email other than the owner's is refused
-- [x] 2.6 n8n still works as before (its hostname, its Access gate)
+- [x] 2.6 n8n still works as before (its hostname, its Access gate) -- a3628c4
 
 ### Phase 3: Spotify app registration
 
 #### Automated
 
-- [ ] 3.1 On the Pi, `sudo stat -c '%a %U' /etc/spotify-to-led/env` prints `600 <service-user>`
-- [ ] 3.2 On the Pi, `sudo grep -cE '^(SPOTIFY_CLIENT_SECRET|HOST)=' /etc/spotify-to-led/env` prints `0`
+- [x] 3.1 On the Pi, `sudo stat -c '%a %U' /etc/spotify-to-led/env` prints `600 <service-user>`
+- [x] 3.2 On the Pi, `sudo grep -cE '^(SPOTIFY_CLIENT_SECRET|HOST)=' /etc/spotify-to-led/env` prints `0`
 
 #### Manual
 
-- [ ] 3.3 The Spotify dashboard's redirect URI, compared character by character, is identical to `SPOTIFY_REDIRECT_URI` in the Pi's env file
-- [ ] 3.4 The app's settings show the owner's account in User Management, and the account page shows Premium as active
+- [x] 3.3 The Spotify dashboard's redirect URI, compared character by character, is identical to `SPOTIFY_REDIRECT_URI` in the Pi's env file
+- [x] 3.4 The app's settings show the owner's account in User Management, and the account page shows Premium as active
 
 ### Phase 4: Record the outcome
 
