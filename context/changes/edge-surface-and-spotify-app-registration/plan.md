@@ -329,21 +329,21 @@ None. Rollback: first delete the DNS record for `<sub>.<owner-domain>` in the Cl
 
 #### Automated
 
-- [x] 3.1 On the Pi, `sudo stat -c '%a %U' /etc/spotify-to-led/env` prints `600 <service-user>`
-- [x] 3.2 On the Pi, `sudo grep -cE '^(SPOTIFY_CLIENT_SECRET|HOST)=' /etc/spotify-to-led/env` prints `0`
+- [x] 3.1 On the Pi, `sudo stat -c '%a %U' /etc/spotify-to-led/env` prints `600 <service-user>` -- ad5c518
+- [x] 3.2 On the Pi, `sudo grep -cE '^(SPOTIFY_CLIENT_SECRET|HOST)=' /etc/spotify-to-led/env` prints `0` -- ad5c518
 
 #### Manual
 
-- [x] 3.3 The Spotify dashboard's redirect URI, compared character by character, is identical to `SPOTIFY_REDIRECT_URI` in the Pi's env file
-- [x] 3.4 The app's settings show the owner's account in User Management, and the account page shows Premium as active
+- [x] 3.3 The Spotify dashboard's redirect URI, compared character by character, is identical to `SPOTIFY_REDIRECT_URI` in the Pi's env file -- ad5c518
+- [x] 3.4 The app's settings show the owner's account in User Management, and the account page shows Premium as active -- ad5c518
 
 ### Phase 4: Record the outcome
 
 #### Automated
 
-- [ ] 4.1 `git diff main --name-only` lists only files under `context/`
-- [ ] 4.2 `git grep` over the change folder prints nothing (no real Access team domain or private LAN IP)
+- [x] 4.1 `git diff main --name-only` lists only files under `context/`
+- [x] 4.2 `git grep` over the change folder prints nothing (no real Access team domain or private LAN IP)
 
 #### Manual
 
-- [ ] 4.3 The owner skims `verification.md` and confirms no real subdomain, domain, client ID or LAN IP appears in it, and that it matches what was configured
+- [x] 4.3 The owner skims `verification.md` and confirms no real subdomain, domain, client ID or LAN IP appears in it, and that it matches what was configured

@@ -195,7 +195,8 @@ Foundations below assume these are present and do NOT re-scaffold them.
   completing an OAuth consent." These are outward-facing and affect a domain shared with a live
   n8n deployment.
 - **Unknowns:**
-  - Does the Pi have a reserved DHCP lease or a static IP? Owner. Block: no -- a router setting,
+  - ~~Does the Pi have a reserved DHCP lease or a static IP?~~ -- RESOLVED 2026-11-06: not needed,
+    because the connector runs on the Pi and routes to `localhost`. Owner. Block: no -- a router setting,
     and Option B (a separate connector on the Pi) is the documented fallback. Worth resolving
     early anyway: if the Pi's address moves, re-authorization breaks silently while the board
     keeps working, which the research calls the most confusing possible failure mode here.
@@ -429,7 +430,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
    `asyncio` dependency pin, and had never been tested against the Python 3.14 the stack mandates.
    Three forks existed with divergent APIs. This was the roadmap's `top_blocker: external` in
    concrete form, and F-01's transport interface is the mitigation that made it reversible.
-7. **Does the Pi have a reserved DHCP lease or a static IP?** -- Owner. Block: none; affects
+7. **Does the Pi have a reserved DHCP lease or a static IP?** -- RESOLVED 2026-11-06 -- no
+   reservation is needed: the tunnel connector runs on the Pi itself and the route targets
+   `localhost:8000`. The original question is kept below for the record. Owner. Block: none; affects
    `F-03`. Required by the recommended Option A wiring, which pins the public hostname to the Pi's
    LAN address. Not observable from this repository.
 
