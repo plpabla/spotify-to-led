@@ -1,7 +1,7 @@
 ---
 change_id: pm2-supervised-service
 title: pm2-supervised service and persistent logs
-status: impl_reviewed
+status: implemented
 created: 2026-11-06
 updated: 2026-11-07
 archived_at: null

@@ -350,9 +350,9 @@ Rollback of the supervisor change: `pm2 delete spotify-to-led && pm2 save`. The 
 
 #### Automated
 
-- [x] 4.1 `verification.md` exists with a section per Phase 3 step: `grep -c "^## Phase" context/changes/pm2-supervised-service/verification.md` is at least 5
-- [x] 4.2 No real MAC address in the change folder: `git grep -nE "([0-9A-F]{2}:){5}[0-9A-F]{2}" -- context/changes/pm2-supervised-service` prints nothing
+- [x] 4.1 `verification.md` exists with a section per Phase 3 step: `grep -c "^## Phase" context/changes/pm2-supervised-service/verification.md` is at least 5 -- b873f00
+- [x] 4.2 No real MAC address in the change folder: `git grep -nE "([0-9A-F]{2}:){5}[0-9A-F]{2}" -- context/changes/pm2-supervised-service` prints nothing -- b873f00
 
 #### Manual
 
-- [x] 4.3 No real hostname, team domain or LAN address in the diff (`git diff main` read by the owner)
+- [x] 4.3 No real hostname, team domain or LAN address in the diff (`git diff main` read by the owner) -- b873f00
