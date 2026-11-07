@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from spotify_to_led.config import Settings
+from spotify_to_led.config import ENV_FILE_VARIABLE, Settings, load_settings
 
 SETTING_KEYS = (
     "BOARD_TRANSPORT",
@@ -22,6 +22,7 @@ SETTING_KEYS = (
     "HOST",
     "PORT",
     "LOG_LEVEL",
+    ENV_FILE_VARIABLE,
 )
 
 A_MAC = "11:22:33:44:55:66"
@@ -110,3 +111,50 @@ def test_a_non_positive_heartbeat_is_rejected(
 
 def test_an_unset_heartbeat_disables_it_rather_than_failing(clean_env: None) -> None:
     assert Settings(_env_file=None, board_heartbeat_seconds=None).board_heartbeat_seconds is None
+
+
+def test_without_the_selector_the_working_directory_dotenv_is_read(
+    clean_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text(f"IDOT_MAC={A_MAC}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert load_settings().idot_mac == A_MAC
+
+
+def test_the_selector_reads_the_named_file_instead_of_dotenv(
+    clean_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text("IDOT_MAC=AA:AA:AA:AA:AA:AA\n", encoding="utf-8")
+    named = tmp_path / "env"
+    named.write_text(f"IDOT_MAC={A_MAC}\nBOARD_SIZE=64\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(ENV_FILE_VARIABLE, str(named))
+
+    settings = load_settings()
+
+    assert settings.idot_mac == A_MAC
+    assert settings.board_size == 64
+
+
+def test_a_selector_naming_a_missing_file_fails_with_the_path(
+    clean_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Falling back to defaults here would quietly drive the stub instead of
+    # the board, so the process has to refuse to start.
+    missing = tmp_path / "does-not-exist"
+    monkeypatch.setenv(ENV_FILE_VARIABLE, str(missing))
+
+    with pytest.raises(FileNotFoundError, match="does-not-exist"):
+        load_settings()
+
+
+def test_the_process_environment_beats_the_selected_file(
+    clean_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    named = tmp_path / "env"
+    named.write_text("IDOT_MAC=AA:AA:AA:AA:AA:AA\n", encoding="utf-8")
+    monkeypatch.setenv(ENV_FILE_VARIABLE, str(named))
+    monkeypatch.setenv("IDOT_MAC", A_MAC)
+
+    assert load_settings().idot_mac == A_MAC
