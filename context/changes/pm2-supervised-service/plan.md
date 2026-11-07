@@ -342,9 +342,9 @@ Rollback of the supervisor change: `pm2 delete spotify-to-led && pm2 save`. The 
 - [x] 3.3 pm2-logrotate is installed with `max_size 10M`, `retain 14`, `compress false`
 - [x] 3.4 `scripts/deploy.sh` exits 0 from the Windows PC, `pm2 ls` shows `spotify-to-led` online, and the board shows the test pattern
 - [x] 3.5 App log lines appear in `~/.pm2/logs/spotify-to-led-out.log` within a second of being written (unbuffered)
-- [ ] 3.6 The crash-loop probe passes 16 restarts without reaching `errored`, then is deleted and the dump re-saved
-- [ ] 3.7 `pm2 restart spotify-to-led` shuts down cleanly inside `kill_timeout`, with no SIGKILL
-- [ ] 3.8 After `sudo reboot` with no human action: all three apps online, `/healthz` ok, pre-reboot app log lines present, `journalctl --list-boots` shows at least 2 boots
+- [x] 3.6 The crash-loop probe passes 16 restarts without reaching `errored`, then is deleted and the dump re-saved
+- [x] 3.7 `pm2 restart spotify-to-led` shuts down cleanly inside `kill_timeout`, with no SIGKILL
+- [x] 3.8 After `sudo reboot` with no human action: all three apps online, `/healthz` ok, pre-reboot app log lines present, `journalctl --list-boots` shows at least 2 boots
 
 ### Phase 4: Record the outcome
 
