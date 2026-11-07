@@ -323,25 +323,25 @@ Rollback of the supervisor change: `pm2 delete spotify-to-led && pm2 save`. The 
 
 #### Automated
 
-- [x] 2.1 Test suite passes, including the new selector cases: `uv run pytest`
-- [x] 2.2 Ecosystem file parses: `node --check ecosystem.config.js`
-- [x] 2.3 Ecosystem file loads with the agreed policy
-- [x] 2.4 Deploy script parses: `bash -n scripts/deploy.sh`
-- [x] 2.5 No journald or EnvironmentFile wording left in code: `git grep -nE "journald|EnvironmentFile|unit file" -- src` prints nothing
+- [x] 2.1 Test suite passes, including the new selector cases: `uv run pytest` -- fd2ceec
+- [x] 2.2 Ecosystem file parses: `node --check ecosystem.config.js` -- fd2ceec
+- [x] 2.3 Ecosystem file loads with the agreed policy -- fd2ceec
+- [x] 2.4 Deploy script parses: `bash -n scripts/deploy.sh` -- fd2ceec
+- [x] 2.5 No journald or EnvironmentFile wording left in code: `git grep -nE "journald|EnvironmentFile|unit file" -- src` prints nothing -- fd2ceec
 
 #### Manual
 
-- [x] 2.6 Locally, `SPOTIFY_TO_LED_ENV_FILE=does-not-exist uv run python -m spotify_to_led.main` fails at startup with a message that names the path
+- [x] 2.6 Locally, `SPOTIFY_TO_LED_ENV_FILE=does-not-exist uv run python -m spotify_to_led.main` fails at startup with a message that names the path -- fd2ceec
 
 ### Phase 3: Pi rollout
 
 #### Manual
 
-- [ ] 3.1 Preconditions hold: `bluetooth` group, env file `600 pi-n8n` with `BOARD_TRANSPORT` and `IDOT_MAC`, `uv sync` succeeds in the checkout
-- [ ] 3.2 After the daemon restart its `Groups:` include 103, and `cloudflared` and n8n are online with both public hostnames still answering through Access
-- [ ] 3.3 pm2-logrotate is installed with `max_size 10M`, `retain 14`, `compress false`
-- [ ] 3.4 `scripts/deploy.sh` exits 0 from the Windows PC, `pm2 ls` shows `spotify-to-led` online, and the board shows the test pattern
-- [ ] 3.5 App log lines appear in `~/.pm2/logs/spotify-to-led-out.log` within a second of being written (unbuffered)
+- [x] 3.1 Preconditions hold: `bluetooth` group, env file `600 pi-n8n` with `BOARD_TRANSPORT` and `IDOT_MAC`, `uv sync` succeeds in the checkout
+- [x] 3.2 After the daemon restart its `Groups:` include 103, and `cloudflared` and n8n are online with both public hostnames still answering through Access
+- [x] 3.3 pm2-logrotate is installed with `max_size 10M`, `retain 14`, `compress false`
+- [x] 3.4 `scripts/deploy.sh` exits 0 from the Windows PC, `pm2 ls` shows `spotify-to-led` online, and the board shows the test pattern
+- [x] 3.5 App log lines appear in `~/.pm2/logs/spotify-to-led-out.log` within a second of being written (unbuffered)
 - [ ] 3.6 The crash-loop probe passes 16 restarts without reaching `errored`, then is deleted and the dump re-saved
 - [ ] 3.7 `pm2 restart spotify-to-led` shuts down cleanly inside `kill_timeout`, with no SIGKILL
 - [ ] 3.8 After `sudo reboot` with no human action: all three apps online, `/healthz` ok, pre-reboot app log lines present, `journalctl --list-boots` shows at least 2 boots

@@ -4,15 +4,18 @@
 # PI_HOST  SSH alias that logs in as the pm2 daemon's user (default: pi)
 # PI_REPO  checkout path, relative to that user's home (default: spotify-to-led)
 #
-# The remote part runs in a login shell, because a non-interactive SSH session
-# may not have uv or pm2 on PATH. Never run it under sudo: pm2 commands talk to
+# The remote part sources ~/.profile, because a non-interactive SSH session may
+# not have uv or pm2 on PATH. It deliberately avoids `bash -l`: a login shell
+# runs ~/.bash_logout on exit, and Debian's fails without a tty, turning a
+# successful deploy into exit 1. Never run it under sudo: pm2 commands talk to
 # the daemon of the user who runs them.
 set -euo pipefail
 
 PI_HOST="${PI_HOST:-pi}"
 PI_REPO="${PI_REPO:-spotify-to-led}"
 
-ssh "$PI_HOST" bash -l -s -- "$PI_REPO" <<'REMOTE'
+ssh "$PI_HOST" bash -s -- "$PI_REPO" <<'REMOTE'
+. "$HOME/.profile"
 set -euo pipefail
 cd "$HOME/$1"
 git pull --ff-only

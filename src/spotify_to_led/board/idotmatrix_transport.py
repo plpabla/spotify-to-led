@@ -14,6 +14,9 @@ therefore remains an open item for roadmap items S-02 and S-03, and nothing
 here should be read as satisfying FR-013.
 """
 
+import asyncio
+import logging
+
 from idotmatrix import IDotMatrixClient, ScreenSize
 from idotmatrix.connection_manager import ConnectionListener
 from PIL import Image
@@ -23,6 +26,13 @@ from spotify_to_led.board.transport import (
     frame_to_pixel_colors,
     validate_frame,
 )
+
+logger = logging.getLogger(__name__)
+
+# Well inside pm2's 10 s `kill_timeout`. With the board unreachable,
+# `disconnect` can wait behind the library's in-flight reconnect attempt for
+# about 30 s, and pm2 would SIGKILL the process before uvicorn finished.
+DISCONNECT_TIMEOUT_SECONDS = 5.0
 
 
 class IDotMatrixBoardTransport:
@@ -38,7 +48,7 @@ class IDotMatrixBoardTransport:
             # `connect` would otherwise make.
             screen_size=ScreenSize((size, size)),
             mac_address=mac_address,
-            # uvicorn and systemd own SIGINT and SIGTERM; letting the library
+            # uvicorn and pm2 own SIGINT and SIGTERM; letting the library
             # install its own handlers would make two parties race for them.
             install_signal_handlers=False,
         )
@@ -74,6 +84,14 @@ class IDotMatrixBoardTransport:
     async def close(self) -> None:
         # `disconnect` is safe when there was never a connection, so this
         # tolerates being called from the lifespan's `finally` after a failed
-        # `connect`.
-        await self._client.disconnect()
+        # `connect`. The wait is bounded so an unreachable board cannot hold
+        # up shutdown past the supervisor's kill window.
+        try:
+            async with asyncio.timeout(DISCONNECT_TIMEOUT_SECONDS):
+                await self._client.disconnect()
+        except TimeoutError:
+            logger.warning(
+                "board disconnect did not finish within %s s; shutting down anyway",
+                DISCONNECT_TIMEOUT_SECONDS,
+            )
         self._link_state = LinkState.DOWN
