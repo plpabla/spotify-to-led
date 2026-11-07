@@ -3,7 +3,7 @@ project: spotify-to-led
 version: 1
 status: draft
 created: 2026-11-03
-updated: 2026-11-06
+updated: 2026-11-07
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -69,7 +69,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | ID   | Change ID                                   | Outcome (user can ...)                                                                                      | Prerequisites    | PRD refs                                        | Status   |
 | ---- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------- | -------- |
 | F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | done        |
-| F-02 | `pm2-supervised-service`                    | (foundation) the service is supervised by the Pi's existing pm2 daemon, and its logs survive a reboot       | F-01             | FR-014, NFR-02                                  | in-progress |
+| F-02 | `pm2-supervised-service`                    | (foundation) the service is supervised by the Pi's existing pm2 daemon, and its logs survive a reboot       | F-01             | FR-014, NFR-02                                  | done        |
 | F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | done        |
 | S-01 | `spotify-authorization-and-playback-read`   | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | proposed |
 | S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | proposed |
@@ -179,7 +179,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   `pm2 save` after every change to the app set, and one daemon restart so the app inherits the
   `bluetooth` group. They are recorded in the risk register, so the danger is skipping them, not
   finding them.
-- **Status:** in-progress
+- **Status:** done
 
 ### F-03: Edge surface and Spotify app registration
 
@@ -493,3 +493,8 @@ closes.)
   already runs on this network, is gated by its own Cloudflare Access application scoped to the
   owner, and is registered with Spotify as an exact-match redirect URI** -- Archived 2026-11-06 ->
   `context/archive/2026-11-05-edge-surface-and-spotify-app-registration/`. Lesson: --.
+- **F-02: (foundation) the service is supervised by the pm2 daemon that already runs
+  `cloudflared` and n8n on the Pi, comes back after a cold boot with no human action, is never
+  marked `errored` and abandoned by pm2's restart limit, and writes rotated logs to disk that
+  persist across reboots** -- Archived 2026-11-07 ->
+  `context/archive/2026-11-06-pm2-supervised-service/`. Lesson: --.
