@@ -17,7 +17,7 @@ from spotify_to_led import frames, main
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.stub import PngBoardTransport
 from spotify_to_led.board.transport import LinkState
-from spotify_to_led.config import Settings
+from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
 
 # `frames` is imported as a module, not as a symbol: a bare `test_pattern`
 # name in this namespace would be collected as a test case.
@@ -71,6 +71,9 @@ def use_transport(
     monkeypatch: pytest.MonkeyPatch, transport: CountingTransport, tmp_path: Path
 ) -> None:
     """Make the lifespan build `transport`, under settings that touch no repo path."""
+    # The lifespan reads the file this names; a developer's export of it must
+    # not fail or reconfigure these tests.
+    monkeypatch.delenv(ENV_FILE_VARIABLE, raising=False)
     monkeypatch.setenv("BOARD_TRANSPORT", "stub")
     monkeypatch.setenv("STUB_FRAME_DIR", str(tmp_path / "frames"))
     monkeypatch.setattr(main, "create_transport", lambda settings: transport)

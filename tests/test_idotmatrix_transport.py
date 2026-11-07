@@ -6,6 +6,7 @@ tests run on a machine with no Bluetooth stack.
 """
 
 import asyncio
+import logging
 
 import pytest
 
@@ -42,8 +43,9 @@ async def test_close_gives_up_on_a_disconnect_that_never_returns(
     transport = make_transport()
     transport._client = HangingClient()  # type: ignore[assignment]
 
-    async with asyncio.timeout(2):
-        await transport.close()
+    with caplog.at_level(logging.WARNING):
+        async with asyncio.timeout(2):
+            await transport.close()
 
     assert transport.link_state is LinkState.DOWN
     assert "board disconnect did not finish" in caplog.text

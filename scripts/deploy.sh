@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Promote the checked-out branch tip on the Pi and fail unless /healthz answers.
+# Pull the branch the Pi's checkout tracks, reload it under pm2, and fail unless
+# /healthz answers.
 #
 # PI_HOST  SSH alias that logs in as the pm2 daemon's user (default: pi)
 # PI_REPO  checkout path, relative to that user's home (default: spotify-to-led)
@@ -14,9 +15,15 @@ set -euo pipefail
 PI_HOST="${PI_HOST:-pi}"
 PI_REPO="${PI_REPO:-spotify-to-led}"
 
-ssh "$PI_HOST" bash -s -- "$PI_REPO" <<'REMOTE'
+# ssh re-parses its remote arguments in the Pi's shell, so PI_REPO is quoted for
+# that shell too, and `--` keeps a PI_HOST starting with `-` from being an option.
+ssh -- "$PI_HOST" bash -s -- "$(printf %q "$PI_REPO")" <<'REMOTE'
 . "$HOME/.profile"
 set -euo pipefail
+if ! command -v uv >/dev/null || ! command -v pm2 >/dev/null; then
+  echo "uv or pm2 is not on PATH after ~/.profile; see infrastructure.md Getting Started step 4" >&2
+  exit 1
+fi
 cd "$HOME/$1"
 git pull --ff-only
 uv sync --frozen --no-dev

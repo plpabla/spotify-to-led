@@ -60,7 +60,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 > "North star" here means the smallest end-to-end flow whose successful delivery would prove the
 > product actually works, placed as early as its prerequisites allow because everything after it
 > only matters if this holds. It is scoped to the idle display rather than to artwork because a
-> slice has to be user-visible: a systemd unit with nothing on the board is a foundation, and
+> slice has to be user-visible: a supervised service with nothing on the board is a foundation, and
 > the idle display is the smallest real presentation that makes "runs unattended" observable
 > from across the room.
 
@@ -118,6 +118,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - Superseded, 2026-11-06: the supervisor is pm2, not a systemd unit, and the logs are pm2's
   on-disk files under `~/.pm2/logs`, rotated by pm2-logrotate. journald on the Pi turned out to be
   persistent by default config anyway. See `infrastructure.md` and F-02.
+  Corrected, 2026-11-07: journald was volatile (Raspberry Pi OS ships `Storage=volatile`), so
+  the rollout added `/etc/systemd/journald.conf.d/50-persistent.conf` (`Storage=persistent`,
+  `SystemMaxUse=100M`). See `context/changes/pm2-supervised-service/verification.md`.
 - **Incidental:** `.env` already carries `IDOT_MAC`, so the board's Bluetooth address has been
   obtained. That is part of `infrastructure.md`'s Getting Started step 3 already done.
 
