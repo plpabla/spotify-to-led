@@ -120,7 +120,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   persistent by default config anyway. See `infrastructure.md` and F-02.
   Corrected, 2026-11-07: journald was volatile (Raspberry Pi OS ships `Storage=volatile`), so
   the rollout added `/etc/systemd/journald.conf.d/50-persistent.conf` (`Storage=persistent`,
-  `SystemMaxUse=100M`). See `context/changes/pm2-supervised-service/verification.md`.
+  `SystemMaxUse=100M`). See `context/archive/2026-11-06-pm2-supervised-service/verification.md`.
 - **Incidental:** `.env` already carries `IDOT_MAC`, so the board's Bluetooth address has been
   obtained. That is part of `infrastructure.md`'s Getting Started step 3 already done.
 
