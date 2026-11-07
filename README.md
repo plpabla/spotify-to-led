@@ -29,7 +29,7 @@ PI_HOST=<alias> scripts/deploy.sh
 - `PI_HOST` is an SSH alias that logs in as the pm2 daemon's user (default `pi`). Never deploy with `sudo pm2`: pm2 commands talk to the daemon of the user who runs them.
 - `PI_REPO` is the checkout path, relative to that user's home (default `spotify-to-led`).
 
-The script pulls with `--ff-only`, runs `uv sync --frozen --no-dev`, reloads the app with `--update-env`, saves the pm2 dump, and exits non-zero unless `/healthz` answers within about 20 seconds.
+The script pulls with `--ff-only`, runs `uv sync --frozen --no-dev`, reloads the app with `--update-env`, saves the pm2 dump, and exits non-zero unless `/healthz` answers within about 20 seconds. Any process on port 8000 counts as an answer, so stop copies of the app started by hand before deploying, or a crash-looping pm2 instance can still look like a success.
 
 Logs, on the Pi:
 
