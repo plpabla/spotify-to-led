@@ -1,14 +1,20 @@
-"""The service skeleton: the factory, the supervised task, and `/healthz`.
+"""The service skeleton: the factory, the supervised tasks, and the routes.
 
 The point of this module is the degradation behaviour. A board failure has to
 be reported and survived, because the same process serves the observability
 surface, so a transport whose `connect` raises must leave the route answering.
+Spotify degrades the same way: without a client ID the app still starts and
+its Spotify routes say so. With one, every Spotify request goes to a
+`MockTransport`, so no test reaches the network.
 """
 
 import logging
 import threading
+import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -18,11 +24,17 @@ from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.stub import PngBoardTransport
 from spotify_to_led.board.transport import LinkState
 from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
+from spotify_to_led.spotify.auth import AUTHORIZE_URL, SCOPE, TOKEN_URL
 
 # `frames` is imported as a module, not as a symbol: a bare `test_pattern`
 # name in this namespace would be collected as a test case.
 
 A_MAC = "11:22:33:44:55:66"
+A_CLIENT_ID = "0123456789abcdef0123456789abcdef"
+A_REDIRECT_URI = "https://led.example.com/callback"
+A_CODE = "AQD-the-authorization-code"
+AN_ACCESS_TOKEN = "BQ-the-access-token"
+A_REFRESH_TOKEN = "AQ-the-refresh-token"
 
 
 class CountingTransport:
@@ -76,7 +88,69 @@ def use_transport(
     monkeypatch.delenv(ENV_FILE_VARIABLE, raising=False)
     monkeypatch.setenv("BOARD_TRANSPORT", "stub")
     monkeypatch.setenv("STUB_FRAME_DIR", str(tmp_path / "frames"))
+    # The process environment beats `.env`, so a developer's real client ID
+    # there cannot switch Spotify on; `use_spotify` switches it on explicitly.
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "")
+    monkeypatch.setenv("SPOTIFY_TOKEN_FILE", str(tmp_path / "var" / "spotify-token.json"))
     monkeypatch.setattr(main, "create_transport", lambda settings: transport)
+
+
+class FakeSpotify:
+    """Answers the token POST with a grant and every playback read with a track.
+
+    It never runs out of answers, because the reader keeps reading every few
+    seconds for as long as the app is up.
+    """
+
+    def __init__(self, *, refuse_grant: bool = False) -> None:
+        self.refuse_grant = refuse_grant
+        self.read = threading.Event()
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        if str(request.url) == TOKEN_URL:
+            if self.refuse_grant:
+                return httpx2.Response(503, json={"error": "server_error"})
+            return httpx2.Response(
+                200,
+                json={
+                    "access_token": AN_ACCESS_TOKEN,
+                    "token_type": "Bearer",
+                    "scope": SCOPE,
+                    "expires_in": 3600,
+                    "refresh_token": A_REFRESH_TOKEN,
+                },
+            )
+        self.read.set()
+        return httpx2.Response(
+            200,
+            json={
+                "is_playing": True,
+                "currently_playing_type": "track",
+                "item": {
+                    "id": "track-1",
+                    "name": "A Track",
+                    "artists": [{"name": "An Artist"}],
+                    "album": {
+                        "images": [{"url": "https://i.scdn.co/image/a", "width": 640, "height": 640}]
+                    },
+                },
+            },
+        )
+
+
+def use_spotify(monkeypatch: pytest.MonkeyPatch, spotify: FakeSpotify) -> None:
+    """Configure Spotify, with every request answered by `spotify`, never the network."""
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", A_CLIENT_ID)
+    monkeypatch.setenv("SPOTIFY_REDIRECT_URI", A_REDIRECT_URI)
+    monkeypatch.setattr(
+        main,
+        "create_spotify_client",
+        lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(spotify)),
+    )
+
+
+def state_of(authorize_response: httpx2.Response) -> str:
+    return parse_qs(urlsplit(authorize_response.headers["location"]).query)["state"][0]
 
 
 def test_the_lifespan_pushes_exactly_one_frame(
@@ -143,6 +217,132 @@ def test_a_failing_close_does_not_escape_the_lifespan(
     errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
     assert errors, "the teardown failure must be logged at error level"
     assert errors[0].exc_info is not None, "the traceback must reach the log"
+
+
+def test_without_a_client_id_the_app_serves_and_the_spotify_routes_say_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        healthz = client.get("/healthz")
+        authorize = client.get("/authorize")
+        callback = client.get("/callback", params={"code": A_CODE, "state": "any-state"})
+        playback = client.get("/playback")
+
+    assert healthz.status_code == 200
+    assert authorize.status_code == 503
+    assert callback.status_code == 503
+    assert playback.status_code == 200
+    assert playback.json()["configured"] is False
+
+
+def test_authorize_redirects_to_spotify_with_the_configured_redirect_uri(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        response = client.get("/authorize")
+
+    assert response.status_code == 302
+    location = response.headers["location"]
+    assert location.startswith(f"{AUTHORIZE_URL}?")
+    query = parse_qs(urlsplit(location).query)
+    # Verbatim from settings, never derived from the request's own host.
+    assert query["redirect_uri"] == [A_REDIRECT_URI]
+    assert query["client_id"] == [A_CLIENT_ID]
+
+
+def test_a_callback_with_a_bad_state_is_rejected_without_an_exchange(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    spotify = FakeSpotify()
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, spotify)
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        client.get("/authorize")
+        forged = client.get("/callback", params={"code": A_CODE, "state": "a-forged-state"})
+        missing = client.get("/callback", params={"code": A_CODE})
+        playback = client.get("/playback").json()
+
+    assert (forged.status_code, missing.status_code) == (400, 400)
+    assert A_CODE not in forged.text
+    assert playback["authorized_at"] is None
+    assert not (tmp_path / "var" / "spotify-token.json").exists()
+
+
+def test_a_callback_carrying_spotifys_error_is_a_400_that_names_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        state = state_of(client.get("/authorize"))
+        response = client.get("/callback", params={"error": "access_denied", "state": state})
+
+    assert response.status_code == 400
+    assert "access_denied" in response.text
+
+
+def test_a_refused_exchange_is_a_502(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify(refuse_grant=True))
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        state = state_of(client.get("/authorize"))
+        response = client.get("/callback", params={"code": A_CODE, "state": state})
+
+    assert response.status_code == 502
+    assert A_CODE not in response.text
+
+
+def test_authorize_callback_and_playback_end_to_end_with_no_token_in_any_answer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    spotify = FakeSpotify()
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, spotify)
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        state = state_of(client.get("/authorize"))
+        callback = client.get("/callback", params={"code": A_CODE, "state": state})
+        assert spotify.read.wait(timeout=5), "the reader never read after authorizing"
+        # The read is answered before the reader records it, so wait for the
+        # snapshot rather than for the request.
+        deadline = time.monotonic() + 5
+        playback = client.get("/playback")
+        while playback.json()["status"] != "playing" and time.monotonic() < deadline:
+            time.sleep(0.05)
+            playback = client.get("/playback")
+
+    assert callback.status_code == 200
+    assert "succeeded" in callback.text
+    assert A_CODE not in callback.text
+    body = playback.json()
+    assert body["configured"] is True
+    assert body["status"] == "playing"
+    assert body["failure"] is None
+    assert body["authorized_at"] is not None
+    assert body["item"]["id"] == "track-1"
+    assert body["item"]["artwork"] == [
+        {"url": "https://i.scdn.co/image/a", "width": 640, "height": 640}
+    ]
+    assert set(body) == {
+        "configured",
+        "status",
+        "item",
+        "failure",
+        "failure_since",
+        "last_read_at",
+        "authorized_at",
+    }
+    for secret in (AN_ACCESS_TOKEN, A_REFRESH_TOKEN, A_CODE):
+        assert secret not in playback.text
+    assert (tmp_path / "var" / "spotify-token.json").exists(), "the grant must be saved"
 
 
 def test_the_factory_wires_the_stub_to_the_configured_directory_and_size(

@@ -313,18 +313,18 @@ None for data. On the Pi, the first deploy needs one owner-performed authorizati
 
 #### Automated
 
-- [x] 2.1 Full suite passes: `uv run pytest`
-- [x] 2.2 Parsing tests cover 204, playing, paused, episode, null-item ad and unknown, missing images
-- [x] 2.3 Reader tests cover authorization wait and wake, state check, refresh, 401, invalid_grant, 429, 5xx, network, kept item and loop survival
-- [x] 2.4 Log capture across a full cycle contains no token, code or verifier
+- [x] 2.1 Full suite passes: `uv run pytest` -- 5084aae
+- [x] 2.2 Parsing tests cover 204, playing, paused, episode, null-item ad and unknown, missing images -- 5084aae
+- [x] 2.3 Reader tests cover authorization wait and wake, state check, refresh, 401, invalid_grant, 429, 5xx, network, kept item and loop survival -- 5084aae
+- [x] 2.4 Log capture across a full cycle contains no token, code or verifier -- 5084aae
 
 ### Phase 3: Wiring, docs and live verification
 
 #### Automated
 
-- [ ] 3.1 Full suite passes: `uv run pytest`
-- [ ] 3.2 httpx2 is a runtime dependency and `uv lock --check` passes
-- [ ] 3.3 App tests cover disabled Spotify, authorize redirect, callback rejections and token-free /playback
+- [x] 3.1 Full suite passes: `uv run pytest`
+- [x] 3.2 httpx2 is a runtime dependency and `uv lock --check` passes
+- [x] 3.3 App tests cover disabled Spotify, authorize redirect, callback rejections and token-free /playback
 
 #### Manual
 
