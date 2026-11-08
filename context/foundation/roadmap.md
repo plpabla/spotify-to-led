@@ -72,7 +72,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | F-02 | `pm2-supervised-service`                    | (foundation) the service is supervised by the Pi's existing pm2 daemon, and its logs survive a reboot       | F-01             | FR-014, NFR-02                                  | done        |
 | F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | done        |
 | S-01 | `spotify-integration`                       | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | done |
-| S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | in-progress |
+| S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | done |
 | S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | proposed |
 | S-04 | `artwork-on-the-board`                      | see the artwork of whatever is playing, and see it change when the item changes                             | S-02             | US-01, FR-006, FR-007, FR-008, FR-016, NFR-01   | proposed |
 | S-05 | `all-item-types-and-frame-reuse`            | see artwork for any item type including podcasts, with repeated artwork never re-rendered                   | S-04             | US-01, FR-010, FR-017                           | proposed |
@@ -260,7 +260,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
     -- RESOLVED 2026-11-08: yes. A dim warm-white eighth note centered on black
     (`IDLE_MAX_CHANNEL = 64`) was judged on the real board from desk distance as deliberate and
     "on", and clearly distinct from the temporary playing placeholder. See
-    `context/changes/unattended-idle-board/verification.md`. Owner. Block: no -- the PRD states
+    `context/archive/2026-11-08-unattended-idle-board/verification.md`. Owner. Block: no -- the PRD states
     this is decided by looking at the real board rather than settled on paper, so it resolves by
     delivering this slice.
 - **Risk:** The north star, and the slice that starts the clock on NFR-02. The 7-day unattended
@@ -271,7 +271,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   whose Bluetooth stack had been up for days. Treat adapter readiness as an application concern
   with in-process retry, because `After=bluetooth.target` orders the unit without guaranteeing a
   powered adapter.
-- **Status:** in-progress
+- **Status:** done
 
 ### S-03: The board link comes back on its own after a drop
 
@@ -297,7 +297,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
     the owner's decision: the display loop redraws whenever the link comes up again, and the
     library's reconnect after a drop now uses a fresh Bluetooth client. Both were verified with a
     board power-cycle only; this slice still owns the out-of-range test and the FR-013 sign-off.
-    See `context/changes/unattended-idle-board/verification.md`.
+    See `context/archive/2026-11-08-unattended-idle-board/verification.md`.
 - **Risk:** Separated from S-02 because it is its own success criterion ("the Bluetooth link to the
   board recovers on its own after a drop") and its own failure surface, and because it is testable
   only by physically interfering with the board. The PRD accepts this as unbounded -- no limit on
@@ -515,3 +515,7 @@ closes.)
   the service keeps determining what is playing with no further human action for as long as the
   stored credential stays valid** -- Archived 2026-11-08 ->
   `context/archive/2026-11-08-spotify-integration/`. Lesson: --.
+- **S-02: Owner can cut power to the Pi and have the board come back by itself showing the
+  considered idle display when nothing is playing, with no monitor, keyboard, login or manual
+  start** -- Archived 2026-11-08 ->
+  `context/archive/2026-11-08-unattended-idle-board/`. Lesson: --.
