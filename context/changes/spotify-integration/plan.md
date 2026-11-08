@@ -328,14 +328,14 @@ None for data. On the Pi, the first deploy needs one owner-performed authorizati
 
 #### Manual
 
-- [x] 3.4 Deploy with scripts/deploy.sh; app online and /healthz answers
-- [x] 3.5 Before authorizing, /playback shows authorization_needed and no polling
-- [x] 3.6 Browser consent lists only the currently-playing permission and /callback reports success
-- [x] 3.7 Token file is 0600 owned by pi-n8n and the env file is unchanged
-- [x] 3.8 Play, pause, episode and stop are reflected in /playback within about 3 seconds
-- [x] 3.9 Private-session read observed and recorded
-- [x] 3.10 Reader resumes after pm2 restart without re-authorization
-- [x] 3.11 After an hour the token has refreshed, with no rate limiting or errors
-- [x] 3.12 Revoking access leads to authorization_needed; re-authorizing resumes with no restart
-- [x] 3.13 pm2 logs contain no token, code or verifier
-- [x] 3.14 Observations recorded in verification.md
+- [x] 3.4 Deploy with scripts/deploy.sh; app online and /healthz answers -- 22afaf6
+- [x] 3.5 Before authorizing, /playback shows authorization_needed and no polling -- 22afaf6
+- [x] 3.6 Browser consent lists only the currently-playing permission and /callback reports success -- 22afaf6
+- [x] 3.7 Token file is 0600 owned by pi-n8n and the env file is unchanged -- 22afaf6
+- [x] 3.8 Play, pause, episode and stop are reflected in /playback within about 3 seconds -- 22afaf6
+- [x] 3.9 Private-session read observed and recorded -- 22afaf6
+- [x] 3.10 Reader resumes after pm2 restart without re-authorization -- 22afaf6
+- [x] 3.11 After an hour the token has refreshed, with no rate limiting or errors -- 22afaf6
+- [x] 3.12 Revoking access leads to authorization_needed; re-authorizing resumes with no restart -- 22afaf6
+- [x] 3.13 pm2 logs contain no token, code or verifier -- 22afaf6
+- [x] 3.14 Observations recorded in verification.md -- 22afaf6
