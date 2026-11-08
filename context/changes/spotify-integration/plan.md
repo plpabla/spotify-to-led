@@ -304,19 +304,19 @@ None for data. On the Pi, the first deploy needs one owner-performed authorizati
 
 #### Automated
 
-- [x] 1.1 Full suite passes: `uv run pytest`
-- [x] 1.2 Settings tests cover disabled, empty client ID, missing redirect URI and default token file
-- [x] 1.3 Auth tests cover URL parameters, PKCE vector, request bodies, refresh rotation, invalid_grant and secret-free errors
-- [x] 1.4 Token store tests cover round trip, missing, malformed, discard, mode 0600 and atomic write
+- [x] 1.1 Full suite passes: `uv run pytest` -- fb47843
+- [x] 1.2 Settings tests cover disabled, empty client ID, missing redirect URI and default token file -- fb47843
+- [x] 1.3 Auth tests cover URL parameters, PKCE vector, request bodies, refresh rotation, invalid_grant and secret-free errors -- fb47843
+- [x] 1.4 Token store tests cover round trip, missing, malformed, discard, mode 0600 and atomic write -- fb47843
 
 ### Phase 2: Playback reader
 
 #### Automated
 
-- [ ] 2.1 Full suite passes: `uv run pytest`
-- [ ] 2.2 Parsing tests cover 204, playing, paused, episode, null-item ad and unknown, missing images
-- [ ] 2.3 Reader tests cover authorization wait and wake, state check, refresh, 401, invalid_grant, 429, 5xx, network, kept item and loop survival
-- [ ] 2.4 Log capture across a full cycle contains no token, code or verifier
+- [x] 2.1 Full suite passes: `uv run pytest`
+- [x] 2.2 Parsing tests cover 204, playing, paused, episode, null-item ad and unknown, missing images
+- [x] 2.3 Reader tests cover authorization wait and wake, state check, refresh, 401, invalid_grant, 429, 5xx, network, kept item and loop survival
+- [x] 2.4 Log capture across a full cycle contains no token, code or verifier
 
 ### Phase 3: Wiring, docs and live verification
 
