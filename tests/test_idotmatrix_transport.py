@@ -51,6 +51,31 @@ async def test_close_gives_up_on_a_disconnect_that_never_returns(
     assert "board disconnect did not finish" in caplog.text
 
 
+class TimingOutLink:
+    """A library transport whose connect fails, as a board still booting does."""
+
+    is_connected = False
+
+    async def connect(self) -> None:
+        raise TimeoutError
+
+
+async def test_a_failed_connect_makes_the_next_attempt_use_a_fresh_link() -> None:
+    # Reusing the failed link is what left the board dark after a cold boot:
+    # its remembered BlueZ device path was gone, so every retry failed at once.
+    transport = make_transport()
+    manager = transport._client._connection_manager
+    stale = TimingOutLink()
+    manager._transport = stale  # type: ignore[assignment]
+    manager._transport_created_for = transport._client.mac_address
+
+    with pytest.raises(TimeoutError):
+        await transport.connect()
+
+    assert manager._transport is not stale
+    assert manager._create_transport() is not stale
+
+
 async def test_close_disconnects_a_responsive_client() -> None:
     transport = make_transport()
     client = PromptClient()

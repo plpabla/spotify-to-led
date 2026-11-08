@@ -279,23 +279,23 @@ None. No data, no configuration keys and no host changes. Rollback is the standa
 
 #### Automated
 
-- [x] 2.1 Display loop and app tests pass: `uv run pytest tests/test_display.py tests/test_app.py`
-- [x] 2.2 Full suite passes: `uv run pytest`
+- [x] 2.1 Display loop and app tests pass: `uv run pytest tests/test_display.py tests/test_app.py` -- 3acf251
+- [x] 2.2 Full suite passes: `uv run pytest` -- 3acf251
 
 #### Manual
 
-- [x] 2.3 On the laptop with the stub, `uv run python -m spotify_to_led.main` writes the idle frame to `var/frames/latest.png`, and with Spotify configured and music started it switches to the placeholder within 5 s, then back to idle when playback stops
+- [x] 2.3 On the laptop with the stub, `uv run python -m spotify_to_led.main` writes the idle frame to `var/frames/latest.png`, and with Spotify configured and music started it switches to the placeholder within 5 s, then back to idle when playback stops -- 3acf251
 
 ### Phase 3: Pi rollout and cold-boot verification
 
 #### Automated
 
-- [ ] 3.1 Deploy exits 0 and `/healthz` answers: `scripts/deploy.sh`
+- [x] 3.1 Deploy exits 0 and `/healthz` answers: `scripts/deploy.sh`
 
 #### Manual
 
-- [ ] 3.2 Idle is legible from desk distance and distinct from the placeholder on the real board
+- [x] 3.2 Idle is legible from desk distance and distinct from the placeholder on the real board
 - [ ] 3.3 Cold boot with the board on: after a power cut and restore, the board shows idle with no human action
 - [ ] 3.4 Cold boot with the board off: switching the board on minutes after boot brings idle up with no restart, and the log shows the retries
-- [ ] 3.5 Playing and stopping music on the Pi switches placeholder and idle within 5 s
+- [x] 3.5 Playing and stopping music on the Pi switches placeholder and idle within 5 s
 - [ ] 3.6 The 7-day run start and the legibility result are recorded in `verification.md` and the roadmap

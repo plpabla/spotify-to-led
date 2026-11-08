@@ -11,6 +11,8 @@ after a successful connection, retried by the library's own bounded backoff
 the disconnect callback only, so it does *not* retry a failed initial connect.
 That cold-boot case -- the service starting before the board is reachable --
 is retried by the display loop (`display.run_display`) with the same backoff.
+For those retries to reach the board, `connect` discards the library's
+Bluetooth client after every failure (see `_discard_stale_link`).
 Re-pushing the current frame after the library reconnects a dropped link
 remains S-03, and nothing here should be read as satisfying FR-013.
 """
@@ -77,7 +79,26 @@ class IDotMatrixBoardTransport:
         # that logs and retries them. Link state is left to the listener
         # callbacks, so it stays right across the library's own reconnect
         # cycles too.
-        await self._client.connect()
+        try:
+            await self._client.connect()
+        except Exception:
+            self._discard_stale_link()
+            raise
+
+    def _discard_stale_link(self) -> None:
+        """Make the next `connect` build a fresh Bluetooth client and scan again.
+
+        bleak remembers the BlueZ device path the first time a scan finds the
+        board, and the library reuses that client for every later connect.
+        If the connect then fails (a board still booting times out), BlueZ
+        drops the device object, and every retry fails at once with "device
+        ... not found" without scanning again -- seen on the Pi as a board
+        switched on after a cold boot that never came up. The library does
+        the same reset for a link its heartbeat finds dead. Its manager has no
+        public way to do it, so this sets a private field; the library is
+        pinned to exactly 0.3.0, and a version bump must re-check it.
+        """
+        self._client._connection_manager._transport = None
 
     async def push_frame(self, frame: Image.Image) -> None:
         validate_frame(frame, self._size)
