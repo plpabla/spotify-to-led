@@ -1,15 +1,19 @@
 """The service entrypoint: settings, the supervised background tasks, and the routes.
 
 This single process is both the board driver and the observability surface, so
-the two are deliberately kept apart: the board work and the Spotify reader run
-in background tasks that swallow and log their own failures, and the routes
-answer whether or not the board is reachable or Spotify is readable. A board or
-Spotify fault is something to report, never something that takes the server
-down with it.
+the two are deliberately kept apart: the display task and the Spotify reader
+run in background tasks that swallow and log their own failures, and the
+routes answer whether or not the board is reachable or Spotify is readable. A
+board or Spotify fault is something to report, never something that takes the
+server down with it.
 
-Spotify is optional. Without a client ID no reader runs and the Spotify routes
-say so instead of failing, so the laptop and the test suite start the same app
-the Pi does.
+The display task (`display.run_display`) retries the board connect until it
+succeeds, then shows the idle frame or the temporary playing placeholder from
+the reader's snapshot, pushing again whenever that choice changes.
+
+Spotify is optional. Without a client ID no reader runs, the display shows
+idle, and the Spotify routes say so instead of failing, so the laptop and the
+test suite start the same app the Pi does.
 """
 
 import asyncio
@@ -26,10 +30,9 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 
-from spotify_to_led import frames
 from spotify_to_led.board.factory import create_transport
-from spotify_to_led.board.transport import BoardTransport
 from spotify_to_led.config import load_settings
+from spotify_to_led.display import run_display
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
 from spotify_to_led.spotify.reader import AuthorizationStateMismatch, SpotifyReader
@@ -77,19 +80,6 @@ def create_spotify_client() -> httpx2.AsyncClient:
     return httpx2.AsyncClient()
 
 
-async def push_test_pattern(transport: BoardTransport, size: int) -> None:
-    """Connect once and push the test pattern once.
-
-    Every failure stops here. Nothing is re-raised, because this task must not
-    be able to prevent the application from serving.
-    """
-    try:
-        await transport.connect()
-        await transport.push_frame(frames.test_pattern(size))
-    except Exception:
-        logger.exception("board task failed; the service keeps serving without the board")
-
-
 async def _cancel(task: asyncio.Task[None]) -> None:
     # The task may have finished long ago, so cancellation has to tolerate an
     # already-completed task rather than assume a pending one.
@@ -104,20 +94,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = load_settings()
     configure_logging(settings.log_level)
     transport = create_transport(settings)
-    task = asyncio.create_task(push_test_pattern(transport, settings.board_size))
 
     spotify_client: httpx2.AsyncClient | None = None
+    reader: SpotifyReader | None = None
     reader_task: asyncio.Task[None] | None = None
     app.state.spotify_reader = None
     if settings.spotify_enabled:
         spotify_client = create_spotify_client()
         reader = SpotifyReader(spotify_client, settings, TokenStore(settings.spotify_token_file))
         app.state.spotify_reader = reader
-        # `run()` classifies and logs its own failures, so like the board task
-        # it cannot take the server down.
+        # `run()` classifies and logs its own failures, so like the display
+        # task it cannot take the server down.
         reader_task = asyncio.create_task(reader.run())
     else:
         logger.info("Spotify is not configured (no SPOTIFY_CLIENT_ID); no reader is running")
+
+    def current() -> PlaybackSnapshot | None:
+        # `None` without a reader, which the display rule shows as idle.
+        return reader.snapshot if reader is not None else None
+
+    # Started after the reader exists, because `current` closes over it.
+    task = asyncio.create_task(run_display(transport, settings.board_size, current))
 
     try:
         yield

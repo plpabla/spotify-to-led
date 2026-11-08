@@ -23,14 +23,20 @@ class PngBoardTransport:
         self._output_dir = output_dir
         self._size = size
         self._link_state = LinkState.DOWN
+        self._connections = 0
 
     @property
     def link_state(self) -> LinkState:
         return self._link_state
 
+    @property
+    def connections(self) -> int:
+        return self._connections
+
     async def connect(self) -> None:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._link_state = LinkState.UP
+        self._connections += 1
 
     async def push_frame(self, frame: Image.Image) -> None:
         validate_frame(frame, self._size)
