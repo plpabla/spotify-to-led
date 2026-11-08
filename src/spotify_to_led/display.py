@@ -32,8 +32,9 @@ Its boundaries in this slice, so they are not mistaken for oversights:
 The log lines are the evidence that the board recovers unattended, so they
 have to stay readable in `pm2 logs`: one WARNING per failed connect, with a
 traceback only on the first, INFO on connect, and INFO on each presentation
-change. At the 60 s ceiling a board that is off all day costs about 1,500
-lines.
+change. Each attempt also gets the library's own INFO "connecting to" line,
+and a scan for an absent board takes about 30 s, so at the 60 s ceiling a
+board that is off all day costs about 2,000 lines.
 """
 
 import asyncio

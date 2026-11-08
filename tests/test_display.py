@@ -260,3 +260,36 @@ async def test_cancelling_during_a_connect_retry_ends_the_task_cleanly() -> None
 
     assert task.cancelled()
     assert board.pushed == []
+
+
+class HangingConnectBoard(FakeBoard):
+    """A board whose connect never finishes, like one still being scanned for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.connecting = asyncio.Event()
+
+    async def connect(self) -> None:
+        self.connects += 1
+        self.connecting.set()
+        await asyncio.Event().wait()
+
+
+async def test_cancelling_while_a_connect_is_in_flight_ends_the_task_without_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The pm2 stop that lands mid-scan: the cancellation must leave the loop,
+    # not be caught as a failed connect and retried.
+    board = HangingConnectBoard()
+    task = asyncio.create_task(run_display(board, SIZE, lambda: None))
+    await asyncio.wait_for(board.connecting.wait(), timeout=2)
+
+    with caplog.at_level(logging.WARNING):
+        task.cancel()
+        # `asyncio.wait` neither cancels nor raises, so a loop that swallowed
+        # the cancellation fails here instead of hanging the suite.
+        await asyncio.wait({task}, timeout=2)
+
+    assert task.cancelled(), "the cancellation was swallowed and the loop went on"
+    assert board.connects == 1
+    assert caplog.records == []

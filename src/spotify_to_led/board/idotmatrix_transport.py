@@ -5,15 +5,16 @@ and acknowledgements, so this module only passes the right construction
 arguments and translates the fork's connection events into `LinkState`.
 
 Recovery boundary, recorded so the next reader does not have to re-derive it:
-`set_auto_reconnect(True)` plus `set_heartbeat(...)` covers a link that drops
-after a successful connection, retried by the library's own bounded backoff
+`set_auto_reconnect(True)` plus `set_heartbeat(...)` retries a link that drops
+after a successful connection, with the library's own bounded backoff
 (5 seconds, growing to at most 60). The library's reconnect loop starts from
 the disconnect callback only, so it does *not* retry a failed initial connect.
 That cold-boot case -- the service starting before the board is reachable --
 is retried by the display loop (`display.run_display`) with the same backoff.
-For those retries to reach the board, `connect` discards the library's
-Bluetooth client after every failure (see `_discard_stale_link`).
-Re-pushing the current frame after the library reconnects a dropped link
+For either kind of retry to reach the board, the library's Bluetooth client
+is discarded after every failed connect and every disconnect (see
+`_discard_stale_link`); without that, a long outage leaves the retries
+failing forever. Re-pushing the current frame after the library reconnects a dropped link
 remains S-03, and nothing here should be read as satisfying FR-013.
 """
 
@@ -73,6 +74,11 @@ class IDotMatrixBoardTransport:
 
     async def _on_disconnected(self) -> None:
         self._link_state = LinkState.DOWN
+        # The library's own reconnect loop reuses the client too, and would
+        # hit the same dead BlueZ path after a long outage. The library
+        # schedules this callback before that loop, which waits 5 s before
+        # its first attempt, so the reset lands first.
+        self._discard_stale_link()
 
     async def connect(self) -> None:
         # Failures propagate to the display loop, which is the one place
@@ -86,19 +92,23 @@ class IDotMatrixBoardTransport:
             raise
 
     def _discard_stale_link(self) -> None:
-        """Make the next `connect` build a fresh Bluetooth client and scan again.
+        """Make the next connect build a fresh Bluetooth client and scan again.
 
         bleak remembers the BlueZ device path the first time a scan finds the
         board, and the library reuses that client for every later connect.
-        If the connect then fails (a board still booting times out), BlueZ
-        drops the device object, and every retry fails at once with "device
-        ... not found" without scanning again -- seen on the Pi as a board
-        switched on after a cold boot that never came up. The library does
-        the same reset for a link its heartbeat finds dead. Its manager has no
-        public way to do it, so this sets a private field; the library is
-        pinned to exactly 0.3.0, and a version bump must re-check it.
+        Once the link fails or drops, BlueZ can remove the device object, and
+        every retry then fails at once with "device ... not found" without
+        scanning again -- seen on the Pi as a board switched on after a cold
+        boot that never came up. The library does the same reset for a link
+        its heartbeat finds dead. Its manager has no public way to do it, so
+        this sets a private field; the library is pinned to exactly 0.3.0,
+        and a version bump must re-check it.
         """
-        self._client._connection_manager._transport = None
+        manager = self._client._connection_manager
+        # Never discard a link that is up: the library's reconnect may have
+        # won the race to this point.
+        if not manager.is_connected():
+            manager._transport = None
 
     async def push_frame(self, frame: Image.Image) -> None:
         validate_frame(frame, self._size)

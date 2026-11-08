@@ -8,7 +8,7 @@ date: 2026-11-08
 
 The repository is public, so every real value is a placeholder: `<board address>` for the board's Bluetooth MAC, `pi` for the SSH alias the deploy script targets. The Pi account `pi-n8n` is named because the foundation docs already name it. Board observations are the owner's; log lines are read from `~/.pm2/logs/spotify-to-led-out.log` and the journal over SSH. Times are the Pi's local time (CET). The Pi has no battery-backed clock, so log lines written right after a boot, before NTP sync, run up to about a minute behind the owner's wall-clock times.
 
-One plan assumption did not hold and is recorded where it surfaced: that `IDotMatrixClient.connect()` can be retried indefinitely after a failure (plan, Open Risks). It cannot; see Phase 3.4. The fix is `4fb1b16`. A host finding unrelated to the code also surfaced: the Pi is under-powered (see "Power supply").
+One plan assumption did not hold and is recorded where it surfaced: that `IDotMatrixClient.connect()` can be retried indefinitely after a failure (`plan-brief.md`, Open Risks & Assumptions). It cannot; see Phase 3.4. The fix is `4fb1b16`. A host finding unrelated to the code also surfaced: the Pi is under-powered (see "Power supply").
 
 The Pi's checkout was switched from `main` to `feat/unattended-idle-board` for this rollout. Switch it back to `main` after the merge, or later deploys pull the feature branch.
 
@@ -117,6 +117,6 @@ Started **2026-11-08 19:16 CET**, at the end of the last power cut on `4fb1b16`.
 
 ## Open follow-ups
 
-- **S-03:** the library's own auto-reconnect after a dropped link reuses the same transport and probably falls into the same stale-path trap. `_discard_stale_link` only runs on `connect` called from the display loop, not on the library's internal reconnect loop. Verify during S-03's physical drop tests.
+- **S-03:** the library's own auto-reconnect after a dropped link would reuse the same transport and fall into the same stale-path trap. After the S-02 review (F1) `_discard_stale_link` also runs from the disconnect listener, guarded so a live link is never discarded, so the library's reconnect builds a fresh client too. This is unit-tested only; S-03's physical drop tests are where it is proven on the board.
 - **Host:** replace or confirm the Pi's power supply (see above).
 - **Pi checkout:** switch back to `main` after the merge.

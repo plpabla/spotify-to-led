@@ -51,29 +51,77 @@ async def test_close_gives_up_on_a_disconnect_that_never_returns(
     assert "board disconnect did not finish" in caplog.text
 
 
-class TimingOutLink:
-    """A library transport whose connect fails, as a board still booting does."""
+class FailingLink:
+    """A library transport whose connect raises `error`."""
 
-    is_connected = False
+    def __init__(self, error: Exception, *, connected: bool = False) -> None:
+        self.error = error
+        self.is_connected = connected
 
     async def connect(self) -> None:
-        raise TimeoutError
+        raise self.error
+
+
+def use_links(transport: IDotMatrixBoardTransport, *links: FailingLink) -> list[FailingLink]:
+    """Make the library build `links`, in order, whenever it needs a fresh link."""
+    manager = transport._client._connection_manager
+    pending = list(links)
+    built: list[FailingLink] = []
+
+    def factory(target: object, on_disconnected: object) -> FailingLink:
+        built.append(pending.pop(0))
+        return built[-1]
+
+    manager._transport_factory = factory
+    # Drop the real bleak link built at construction, so the next connect
+    # asks the factory.
+    manager._transport = None
+    return built
 
 
 async def test_a_failed_connect_makes_the_next_attempt_use_a_fresh_link() -> None:
     # Reusing the failed link is what left the board dark after a cold boot:
     # its remembered BlueZ device path was gone, so every retry failed at once.
     transport = make_transport()
-    manager = transport._client._connection_manager
-    stale = TimingOutLink()
-    manager._transport = stale  # type: ignore[assignment]
-    manager._transport_created_for = transport._client.mac_address
+    built = use_links(
+        transport,
+        FailingLink(TimeoutError()),
+        FailingLink(ConnectionRefusedError()),
+    )
 
     with pytest.raises(TimeoutError):
         await transport.connect()
+    # The retry reaches the second link; reusing the first would time out again.
+    with pytest.raises(ConnectionRefusedError):
+        await transport.connect()
 
-    assert manager._transport is not stale
-    assert manager._create_transport() is not stale
+    assert len(built) == 2
+
+
+async def test_a_drop_makes_the_librarys_reconnect_use_a_fresh_link() -> None:
+    # The library's own reconnect loop retries with whatever link the manager
+    # holds, so a drop has to discard it just as a failed connect does.
+    transport = make_transport()
+    manager = transport._client._connection_manager
+    manager._transport = FailingLink(TimeoutError())  # type: ignore[assignment]
+
+    await transport._on_disconnected()
+
+    assert manager._transport is None
+    assert transport.link_state is LinkState.DOWN
+
+
+async def test_a_disconnect_that_finds_the_link_back_up_keeps_it() -> None:
+    # The library's reconnect can win the race to the listener; a live link
+    # must never be thrown away.
+    transport = make_transport()
+    manager = transport._client._connection_manager
+    live = FailingLink(TimeoutError(), connected=True)
+    manager._transport = live  # type: ignore[assignment]
+
+    await transport._on_disconnected()
+
+    assert manager._transport is live
 
 
 async def test_close_disconnects_a_responsive_client() -> None:

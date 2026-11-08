@@ -325,7 +325,11 @@ Foundations below assume these are present and do NOT re-scaffold them.
   than pretending to a spec it does not have. NFR-01 (the 5-second budget from item change to
   correct board state) is verified here. The PRD also accepts two known costs rather than treating
   them as defects: rapid skipping may thrash the link with no settle window, and a same-album track
-  change re-pushes identical pixels -- the second is what S-05 addresses.
+  change re-pushes identical pixels -- the second is what S-05 addresses. Added 2026-11-08 from
+  the S-02 review: the display rule (`display.py`) ignores read failures, so while reads fail the
+  board keeps whatever presentation it last chose. With S-02's placeholder that is harmless; once
+  this slice puts real covers behind the same rule it becomes an unmarked stale cover, which the
+  hard rules forbid. So S-04 must either ship with S-06's marker or not ship covers before S-06.
 - **Status:** proposed
 
 ### S-05: Every item type is covered, and repeated artwork is not re-rendered
