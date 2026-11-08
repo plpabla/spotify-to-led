@@ -256,9 +256,13 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Parallel with:** --
 - **Blockers:** --
 - **Unknowns:**
-  - Is the idle display legible and distinguishable at 32x32 from normal desk viewing distance?
-    Owner. Block: no -- the PRD states this is decided by looking at the real board rather than
-    settled on paper, so it resolves by delivering this slice.
+  - ~~Is the idle display legible and distinguishable at 32x32 from normal desk viewing distance?~~
+    -- RESOLVED 2026-11-08: yes. A dim warm-white eighth note centered on black
+    (`IDLE_MAX_CHANNEL = 64`) was judged on the real board from desk distance as deliberate and
+    "on", and clearly distinct from the temporary playing placeholder. See
+    `context/changes/unattended-idle-board/verification.md`. Owner. Block: no -- the PRD states
+    this is decided by looking at the real board rather than settled on paper, so it resolves by
+    delivering this slice.
 - **Risk:** The north star, and the slice that starts the clock on NFR-02. The 7-day unattended
   property can only be observed by leaving a real build running on the Pi, so until this lands
   that property cannot begin to be proven -- which is why `main_goal: quality` places it ahead of

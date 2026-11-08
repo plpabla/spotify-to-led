@@ -295,7 +295,7 @@ None. No data, no configuration keys and no host changes. Rollback is the standa
 #### Manual
 
 - [x] 3.2 Idle is legible from desk distance and distinct from the placeholder on the real board
-- [ ] 3.3 Cold boot with the board on: after a power cut and restore, the board shows idle with no human action
-- [ ] 3.4 Cold boot with the board off: switching the board on minutes after boot brings idle up with no restart, and the log shows the retries
+- [x] 3.3 Cold boot with the board on: after a power cut and restore, the board shows idle with no human action
+- [x] 3.4 Cold boot with the board off: switching the board on minutes after boot brings idle up with no restart, and the log shows the retries
 - [x] 3.5 Playing and stopping music on the Pi switches placeholder and idle within 5 s
-- [ ] 3.6 The 7-day run start and the legibility result are recorded in `verification.md` and the roadmap
+- [x] 3.6 The 7-day run start and the legibility result are recorded in `verification.md` and the roadmap
