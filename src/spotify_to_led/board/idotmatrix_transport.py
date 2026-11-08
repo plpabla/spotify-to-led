@@ -9,9 +9,10 @@ Recovery boundary, recorded so the next reader does not have to re-derive it:
 after a successful connection, retried by the library's own bounded backoff
 (5 seconds, growing to at most 60). The library's reconnect loop starts from
 the disconnect callback only, so it does *not* retry a failed initial connect.
-The cold-boot case -- the service starting before the board is reachable --
-therefore remains an open item for roadmap items S-02 and S-03, and nothing
-here should be read as satisfying FR-013.
+That cold-boot case -- the service starting before the board is reachable --
+is retried by the display loop (`display.run_display`) with the same backoff.
+Re-pushing the current frame after the library reconnects a dropped link
+remains S-03, and nothing here should be read as satisfying FR-013.
 """
 
 import asyncio
@@ -72,9 +73,10 @@ class IDotMatrixBoardTransport:
         self._link_state = LinkState.DOWN
 
     async def connect(self) -> None:
-        # Failures propagate to the lifespan's task, which is the one place
-        # that logs them. Link state is left to the listener callbacks, so it
-        # stays right across the library's own reconnect cycles too.
+        # Failures propagate to the display loop, which is the one place
+        # that logs and retries them. Link state is left to the listener
+        # callbacks, so it stays right across the library's own reconnect
+        # cycles too.
         await self._client.connect()
 
     async def push_frame(self, frame: Image.Image) -> None:

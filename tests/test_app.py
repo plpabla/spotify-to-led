@@ -2,7 +2,8 @@
 
 The point of this module is the degradation behaviour. A board failure has to
 be reported and survived, because the same process serves the observability
-surface, so a transport whose `connect` raises must leave the route answering.
+surface, so a transport whose `connect` raises must leave the route answering
+while the display task keeps retrying it.
 Spotify degrades the same way: without a client ID the app still starts and
 its Spotify routes say so. With one, every Spotify request goes to a
 `MockTransport`, so no test reaches the network.
@@ -19,10 +20,10 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from spotify_to_led import frames, main
+from spotify_to_led import display, frames, main
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.stub import PngBoardTransport
-from spotify_to_led.board.transport import LinkState
+from spotify_to_led.board.transport import LinkState, frame_to_pixel_colors
 from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
 from spotify_to_led.spotify.auth import AUTHORIZE_URL, SCOPE, TOKEN_URL
 
@@ -41,22 +42,28 @@ class CountingTransport:
     """A `BoardTransport` that records calls instead of driving anything."""
 
     def __init__(self) -> None:
-        self.pushes = 0
+        self.frames: list[Image.Image] = []
         self.closed = False
+        self.connects = 0
         self.connect_attempted = threading.Event()
         self.pushed = threading.Event()
         self._link_state = LinkState.DOWN
+
+    @property
+    def pushes(self) -> int:
+        return len(self.frames)
 
     @property
     def link_state(self) -> LinkState:
         return self._link_state
 
     async def connect(self) -> None:
+        self.connects += 1
         self.connect_attempted.set()
         self._link_state = LinkState.UP
 
     async def push_frame(self, frame: Image.Image) -> None:
-        self.pushes += 1
+        self.frames.append(frame)
         self.pushed.set()
 
     async def close(self) -> None:
@@ -65,11 +72,25 @@ class CountingTransport:
 
 
 class FailingTransport(CountingTransport):
-    """A board that cannot be reached, which is the case that matters."""
+    """A board that cannot be reached, which is the case that matters.
+
+    It fails its first `failing_connects` connects, or every one when that is
+    `None`, and sets `retried` once a second attempt has been made.
+    """
+
+    def __init__(self, failing_connects: int | None = None) -> None:
+        super().__init__()
+        self.failing_connects = failing_connects
+        self.retried = threading.Event()
 
     async def connect(self) -> None:
+        self.connects += 1
         self.connect_attempted.set()
-        raise OSError("the board is not reachable")
+        if self.connects >= 2:
+            self.retried.set()
+        if self.failing_connects is None or self.connects <= self.failing_connects:
+            raise OSError("the board is not reachable")
+        self._link_state = LinkState.UP
 
 
 class FailingCloseTransport(CountingTransport):
@@ -153,17 +174,31 @@ def state_of(authorize_response: httpx2.Response) -> str:
     return parse_qs(urlsplit(authorize_response.headers["location"]).query)["state"][0]
 
 
-def test_the_lifespan_pushes_exactly_one_frame(
+def use_short_display_delays(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shrink the display loop's waits, so retries and samples happen within a test."""
+    monkeypatch.setattr(display, "CONNECT_RETRY_INITIAL_SECONDS", 0.01)
+    monkeypatch.setattr(display, "CONNECT_RETRY_MAX_SECONDS", 0.02)
+    monkeypatch.setattr(display, "SAMPLE_INTERVAL_SECONDS", 0.01)
+
+
+def test_without_spotify_the_lifespan_pushes_the_idle_frame_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     transport = CountingTransport()
     use_transport(monkeypatch, transport, tmp_path)
+    use_short_display_delays(monkeypatch)
+    monkeypatch.setenv("BOARD_SIZE", "16")
 
     with TestClient(main.app):
-        assert transport.pushed.wait(timeout=5), "the background task never pushed"
+        assert transport.pushed.wait(timeout=5), "the display task never pushed"
+        # Many sample intervals, so a re-push of the same frame would show.
+        time.sleep(0.2)
 
     # Asserted after shutdown, which awaits the task: one frame, not one or more.
     assert transport.pushes == 1
+    assert frame_to_pixel_colors(transport.frames[0]) == frame_to_pixel_colors(
+        frames.idle(16)
+    )
     assert transport.closed, "shutdown must close the transport"
 
 
@@ -182,24 +217,55 @@ def test_healthz_returns_a_fixed_ok_payload(
     assert response.json() == {"status": "ok"}
 
 
-def test_a_failing_connect_leaves_healthz_answering_and_is_logged(
+def test_a_failing_connect_is_retried_and_logged_while_healthz_answers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     transport = FailingTransport()
     use_transport(monkeypatch, transport, tmp_path)
+    use_short_display_delays(monkeypatch)
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         with TestClient(main.app) as client:
-            assert transport.connect_attempted.wait(timeout=5)
+            assert transport.retried.wait(timeout=5), "the failed connect was never retried"
             response = client.get("/healthz")
 
     assert response.status_code == 200
     assert transport.pushes == 0
-    # A silently swallowed exception would pass the assertion above, which is a
-    # worse bug than the crash it replaces.
-    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
-    assert errors, "the board failure must be logged at error level"
-    assert errors[0].exc_info is not None, "the traceback must reach the log"
+    # A silently swallowed exception would pass the assertions above, which is
+    # a worse bug than the crash it replaces.
+    failures = [r for r in caplog.records if "board connect failed" in r.getMessage()]
+    assert len(failures) >= 2, "every failed attempt must be logged"
+    assert all(r.levelno == logging.WARNING for r in failures)
+    assert failures[0].exc_info, "the first failure's traceback must reach the log"
+
+
+def test_a_board_that_comes_up_later_is_connected_and_shows_idle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transport = FailingTransport(failing_connects=3)
+    use_transport(monkeypatch, transport, tmp_path)
+    use_short_display_delays(monkeypatch)
+
+    with TestClient(main.app):
+        assert transport.pushed.wait(timeout=5), "the display task never pushed"
+
+    assert transport.connects == 4
+    assert transport.pushes == 1
+
+
+def test_shutdown_closes_the_transport_while_the_connect_is_being_retried(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The real 5 s delay: shutdown arrives while the loop waits to retry.
+    transport = FailingTransport()
+    use_transport(monkeypatch, transport, tmp_path)
+
+    with TestClient(main.app) as client:
+        assert transport.connect_attempted.wait(timeout=5)
+        assert client.get("/healthz").status_code == 200
+
+    assert transport.connects == 1
+    assert transport.closed, "shutdown must close the transport mid-retry"
 
 
 def test_a_failing_close_does_not_escape_the_lifespan(

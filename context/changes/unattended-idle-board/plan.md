@@ -268,23 +268,23 @@ None. No data, no configuration keys and no host changes. Rollback is the standa
 
 #### Automated
 
-- [x] 1.1 New frame and rule tests pass: `uv run pytest tests/test_frames.py tests/test_display.py`
-- [x] 1.2 Full suite passes: `uv run pytest`
+- [x] 1.1 New frame and rule tests pass: `uv run pytest tests/test_frames.py tests/test_display.py` -- a39d0f8
+- [x] 1.2 Full suite passes: `uv run pytest` -- a39d0f8
 
 #### Manual
 
-- [x] 1.3 The idle and placeholder frames written to PNG through the stub look like a dim centered note and a bright play triangle
+- [x] 1.3 The idle and placeholder frames written to PNG through the stub look like a dim centered note and a bright play triangle -- a39d0f8
 
 ### Phase 2: Display task with connect retry, wired into the app
 
 #### Automated
 
-- [ ] 2.1 Display loop and app tests pass: `uv run pytest tests/test_display.py tests/test_app.py`
-- [ ] 2.2 Full suite passes: `uv run pytest`
+- [x] 2.1 Display loop and app tests pass: `uv run pytest tests/test_display.py tests/test_app.py`
+- [x] 2.2 Full suite passes: `uv run pytest`
 
 #### Manual
 
-- [ ] 2.3 On the laptop with the stub, `uv run python -m spotify_to_led.main` writes the idle frame to `var/frames/latest.png`, and with Spotify configured and music started it switches to the placeholder within 5 s, then back to idle when playback stops
+- [x] 2.3 On the laptop with the stub, `uv run python -m spotify_to_led.main` writes the idle frame to `var/frames/latest.png`, and with Spotify configured and music started it switches to the placeholder within 5 s, then back to idle when playback stops
 
 ### Phase 3: Pi rollout and cold-boot verification
 
