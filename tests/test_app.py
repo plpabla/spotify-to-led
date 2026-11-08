@@ -288,6 +288,42 @@ def test_a_callback_carrying_spotifys_error_is_a_400_that_names_it(
     assert "access_denied" in response.text
 
 
+def test_a_callback_error_that_is_not_a_spotify_code_is_not_echoed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    crafted = "Your account is suspended, call 555-0100"
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        response = client.get("/callback", params={"error": crafted})
+
+    assert response.status_code == 400
+    assert crafted not in response.text
+    assert "unknown error" in response.text
+
+
+def test_an_undecodable_token_answer_is_a_502_not_a_crash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def undecodable(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.DecodingError("bad gzip stream", request=request)
+
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    monkeypatch.setattr(
+        main,
+        "create_spotify_client",
+        lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(undecodable)),
+    )
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        state = state_of(client.get("/authorize"))
+        response = client.get("/callback", params={"code": A_CODE, "state": state})
+
+    assert response.status_code == 502
+
+
 def test_a_refused_exchange_is_a_502(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     use_transport(monkeypatch, CountingTransport(), tmp_path)
     use_spotify(monkeypatch, FakeSpotify(refuse_grant=True))

@@ -52,6 +52,10 @@ class TokenStore:
     def save(self, token_set: TokenSet) -> None:
         """Write `token_set` atomically, readable by the owner only."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # A crash between creating a temp file and replacing the target leaves
+        # one behind, holding live tokens; nothing else would ever remove it.
+        for stale in self.path.parent.glob(f".{self.path.name}.*.tmp"):
+            stale.unlink(missing_ok=True)
         # Same directory as the target, or `os.replace` would not be atomic.
         temp = self.path.with_name(f".{self.path.name}.{secrets.token_hex(4)}.tmp")
         data = json.dumps(_to_json(token_set))
@@ -67,10 +71,26 @@ class TokenStore:
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
+        _fsync_directory(self.path.parent)
 
     def discard(self) -> None:
         """Delete the saved token set; a missing file is already discarded."""
         self.path.unlink(missing_ok=True)
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make the rename itself durable, so a power cut cannot undo a rotation.
+
+    POSIX only: Windows cannot open a directory as a file, and the service
+    only ever runs on the Pi.
+    """
+    if os.name != "posix":
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _to_json(token_set: TokenSet) -> dict[str, str]:

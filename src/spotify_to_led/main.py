@@ -14,6 +14,7 @@ the Pi does.
 
 import asyncio
 import logging
+import re
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -37,6 +38,9 @@ from spotify_to_led.spotify.token_store import TokenStore
 logger = logging.getLogger(__name__)
 
 NOT_CONFIGURED = "Spotify is not configured on this service (SPOTIFY_CLIENT_ID is empty)."
+# Spotify's error codes are short snake_case words; anything else on the query
+# is not echoed, so a crafted link cannot put its own text on this page.
+SPOTIFY_ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 SNAPSHOT_FIELDS = ("status", "item", "failure", "failure_since", "last_read_at", "authorized_at")
 
 
@@ -180,8 +184,9 @@ async def callback(
     if reader is None:
         return PlainTextResponse(NOT_CONFIGURED, status_code=503)
     if error is not None:
+        named = error if SPOTIFY_ERROR_CODE.fullmatch(error) else "unknown error"
         return PlainTextResponse(
-            f"Spotify did not authorize the service ({error}). Start again at /authorize.",
+            f"Spotify did not authorize the service ({named}). Start again at /authorize.",
             status_code=400,
         )
     if code is None or state is None:
@@ -196,7 +201,7 @@ async def callback(
             "This is not the authorization the service started. Start again at /authorize.",
             status_code=400,
         )
-    except (AuthorizationRevoked, SpotifyAuthError, httpx2.TransportError) as failure:
+    except (AuthorizationRevoked, SpotifyAuthError, httpx2.RequestError) as failure:
         # The type name only: the request behind it carried the code and the
         # verifier, and nothing derived from it belongs in the log.
         logger.warning("Spotify code exchange failed (%s)", type(failure).__name__)

@@ -392,6 +392,12 @@ async def test_a_network_failure_during_refresh_is_a_network_failure(tmp_path: P
         # Never faster than the normal cadence, whatever the header says.
         ({"Retry-After": "1"}, INTERVAL),
         ({}, 30.0),
+        # `float` reads these, and `asyncio.sleep(nan)` would end the reader.
+        ({"Retry-After": "nan"}, 30.0),
+        ({"Retry-After": "inf"}, 30.0),
+        ({"Retry-After": "1e400"}, 30.0),
+        # A finite but absurd wait is capped rather than parking the reader.
+        ({"Retry-After": "86400"}, 3600.0),
     ],
 )
 async def test_429_is_rate_limited_and_honours_retry_after(
@@ -480,6 +486,60 @@ async def test_a_paused_item_stays_the_believed_item(tmp_path: Path) -> None:
     snapshot = harness.reader.snapshot
     assert snapshot.status is PlaybackStatus.PAUSED
     assert snapshot.item is not None and snapshot.item.id == "track-1"
+
+
+async def test_a_malformed_body_is_an_api_error_without_a_traceback(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    spotify = FakeSpotify(reads=[httpx2.Response(200, content=b"{not json"), a_track()])
+    harness = Harness(tmp_path, spotify, ticks=2, token=a_token_set())
+
+    with caplog.at_level(logging.INFO):
+        await harness.run()
+
+    assert "malformed body" in caplog.text
+    assert "unexpected error" not in caplog.text
+    assert harness.sleep.durations == [INTERVAL, INTERVAL]
+    assert harness.reader.snapshot.status is PlaybackStatus.PLAYING
+
+
+async def test_an_undecodable_body_is_an_api_error_without_a_traceback(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    def undecodable(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.DecodingError("bad gzip stream", request=request)
+
+    spotify = FakeSpotify(reads=[undecodable])
+    harness = Harness(tmp_path, spotify, ticks=1, token=a_token_set())
+
+    with caplog.at_level(logging.INFO):
+        await harness.run()
+
+    assert harness.reader.snapshot.failure is ReadFailure.API_ERROR
+    # Classified where it happens, not caught by the catch-all for bugs.
+    assert "undecodable body" in caplog.text
+    assert "unexpected error" not in caplog.text
+
+
+async def test_a_token_file_that_cannot_be_deleted_still_means_authorization_needed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    spotify = FakeSpotify(tokens=[httpx2.Response(400, json={"error": "invalid_grant"})])
+    harness = Harness(tmp_path, spotify, ticks=1, token=a_token_set(expires_in=timedelta(seconds=10)))
+
+    def failing_discard() -> None:
+        raise PermissionError("var/ is read-only")
+
+    monkeypatch.setattr(harness.store, "discard", failing_discard)
+
+    with caplog.at_level(logging.INFO):
+        task = asyncio.create_task(harness.reader.run())
+        await settle()
+
+    assert harness.reader.snapshot.failure is ReadFailure.AUTHORIZATION_NEEDED
+    assert "could not delete the Spotify token file" in caplog.text
+    assert "unexpected error" not in caplog.text
+    await stop(task)
 
 
 async def test_an_unexpected_exception_does_not_end_the_loop(

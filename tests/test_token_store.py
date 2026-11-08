@@ -112,6 +112,17 @@ def test_the_saved_file_is_readable_by_the_owner_only(tmp_path: Path) -> None:
     assert path.stat().st_mode & 0o777 == 0o600
 
 
+def test_a_save_removes_temp_files_a_crash_left_behind(tmp_path: Path) -> None:
+    # A kill between creating the temp file and replacing the target skips the
+    # cleanup, leaving a copy of the tokens nothing else would remove.
+    stale = tmp_path / ".spotify-token.json.deadbeef.tmp"
+    stale.write_text("{}", encoding="utf-8")
+
+    TokenStore(tmp_path / "spotify-token.json").save(a_token_set())
+
+    assert [entry.name for entry in tmp_path.iterdir()] == ["spotify-token.json"]
+
+
 def test_a_failed_write_leaves_the_previous_file_intact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

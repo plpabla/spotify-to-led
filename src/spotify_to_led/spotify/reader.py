@@ -17,6 +17,7 @@ authorization code or the verifier.
 
 import asyncio
 import logging
+import math
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -57,6 +58,9 @@ REFRESH_MARGIN = timedelta(seconds=60)
 # Used when a 429 comes without a usable `Retry-After`: the length of
 # Spotify's rolling rate-limit window.
 DEFAULT_RETRY_AFTER_SECONDS = 30.0
+# The longest a `Retry-After` may put the reader to sleep, so an absurd header
+# cannot park it for days.
+MAX_RETRY_AFTER_SECONDS = 3600.0
 
 Clock = Callable[[], datetime]
 Sleep = Callable[[float], Awaitable[None]]
@@ -186,10 +190,20 @@ class SpotifyReader:
         except httpx2.TransportError as error:
             self._fail(ReadFailure.NETWORK, type(error).__name__)
             return self._interval
+        except httpx2.DecodingError:
+            # Spotify answered, but with a body that would not decode.
+            self._fail(ReadFailure.API_ERROR, "undecodable body")
+            return self._interval
 
         status_code = response.status_code
         if status_code in (200, 204):
-            body = response.json() if status_code == 200 and response.content else None
+            try:
+                body = response.json() if status_code == 200 and response.content else None
+            except ValueError:
+                # A classified failure rather than the catch-all, which would
+                # log a traceback on every tick for as long as it lasts.
+                self._fail(ReadFailure.API_ERROR, "malformed body")
+                return self._interval
             status, item = parse_currently_playing(status_code, body)
             self._refreshed_after_401 = False
             self._succeed(status, item)
@@ -228,7 +242,16 @@ class SpotifyReader:
         # meanwhile is left alone.
         if self._token is token:
             self._token = None
-            self._store.discard()
+            try:
+                self._store.discard()
+            except OSError as error:
+                # The grant is already dropped in memory; a file left behind
+                # is refused again at the next start and discarded then.
+                logger.error(
+                    "could not delete the Spotify token file %s (%s)",
+                    self._store.path,
+                    type(error).__name__,
+                )
         self._fail(ReadFailure.AUTHORIZATION_NEEDED)
 
     async def _pause(self, seconds: float | None) -> None:
@@ -294,6 +317,11 @@ def _describe(item: PlayingItem | None) -> str:
 def _retry_after(response: httpx2.Response) -> float:
     """Seconds from `Retry-After`, or the default when it is missing or unreadable."""
     try:
-        return max(float(response.headers["retry-after"]), 0.0)
+        seconds = float(response.headers["retry-after"])
     except (KeyError, ValueError):
         return DEFAULT_RETRY_AFTER_SECONDS
+    # `float` accepts "nan" and "inf", and `asyncio.sleep(nan)` raises, which
+    # would end the reader.
+    if not math.isfinite(seconds):
+        return DEFAULT_RETRY_AFTER_SECONDS
+    return min(max(seconds, 0.0), MAX_RETRY_AFTER_SECONDS)
