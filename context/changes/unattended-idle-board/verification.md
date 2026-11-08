@@ -113,7 +113,7 @@ The boot that never came up (19:02) is consistent with a brownout. This is a hos
 
 ## 7-day unattended run (NFR-02)
 
-Started **2026-11-08 19:16 CET**, at the end of the last power cut on `4fb1b16`. Owner's decision: start now and carry the power-supply finding as an open risk rather than wait for a new supply. A deploy, a manual restart or a reboot caused by the supply restarts the count. Evidence to read at the end: `pm2 show spotify-to-led` (restarts, uptime), `journalctl --list-boots`, and the display and reader lines in `~/.pm2/logs/spotify-to-led-out.log`.
+Started **2026-11-08 19:31 CET**, at the redeploy of `7fddf47` (the review fixes, including the reset on disconnect). It first started at 19:16 on `4fb1b16`; the review's F1 fix changed runtime behaviour, so the owner chose to redeploy and restart the count. A clean reboot at 19:28 (`systemd-reboot.service`, requested, not a power loss) came just before the redeploy; the app came back by itself after it. The owner chose to start now and carry the power-supply finding as an open risk rather than wait for a new supply. A deploy, a manual restart or a reboot caused by the supply restarts the count. Evidence to read at the end: `pm2 show spotify-to-led` (restarts, uptime), `journalctl --list-boots`, and the display and reader lines in `~/.pm2/logs/spotify-to-led-out.log`.
 
 ## Open follow-ups
 
