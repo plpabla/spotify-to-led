@@ -40,6 +40,20 @@ NOT_CONFIGURED = "Spotify is not configured on this service (SPOTIFY_CLIENT_ID i
 SNAPSHOT_FIELDS = ("status", "item", "failure", "failure_since", "last_read_at", "authorized_at")
 
 
+def _drop_query_strings(record: logging.LogRecord) -> bool:
+    """Cut the query string off the path in a uvicorn access-log line.
+
+    `/callback` arrives with the authorization code in its query, and uvicorn
+    logs the full request line, so without this every authorization would
+    write a code into the pm2 log.
+    """
+    if isinstance(record.args, tuple) and len(record.args) >= 3:
+        args = list(record.args)
+        args[2] = str(args[2]).split("?", 1)[0]
+        record.args = tuple(args)
+    return True
+
+
 def configure_logging(level: str) -> None:
     """Send the root logger to stdout at `level`, so pm2's log files capture it."""
     logging.basicConfig(
@@ -47,6 +61,11 @@ def configure_logging(level: str) -> None:
         stream=sys.stdout,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # Adding the same function twice is a no-op, so repeated lifespans are fine.
+    logging.getLogger("uvicorn.access").addFilter(_drop_query_strings)
+    # httpx2 logs every request at INFO, which is a line per poll every three
+    # seconds; the reader logs its own state changes instead.
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
 
 
 def create_spotify_client() -> httpx2.AsyncClient:

@@ -345,6 +345,32 @@ def test_authorize_callback_and_playback_end_to_end_with_no_token_in_any_answer(
     assert (tmp_path / "var" / "spotify-token.json").exists(), "the grant must be saved"
 
 
+def test_the_access_log_drops_the_callback_query_and_its_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # TestClient bypasses uvicorn, so the line is logged the way uvicorn's
+    # h11 protocol logs it: the path with its query is the third argument.
+    main.configure_logging("INFO")
+    with caplog.at_level(logging.INFO, logger="uvicorn.access"):
+        logging.getLogger("uvicorn.access").info(
+            '%s - "%s %s HTTP/%s" %d',
+            "127.0.0.1:5000",
+            "GET",
+            f"/callback?code={A_CODE}&state=s",
+            "1.1",
+            200,
+        )
+
+    assert A_CODE not in caplog.text
+    assert '"GET /callback HTTP/1.1" 200' in caplog.text
+
+
+def test_httpx2_does_not_log_every_poll() -> None:
+    main.configure_logging("INFO")
+
+    assert not logging.getLogger("httpx2").isEnabledFor(logging.INFO)
+
+
 def test_the_factory_wires_the_stub_to_the_configured_directory_and_size(
     tmp_path: Path,
 ) -> None:

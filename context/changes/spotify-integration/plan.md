@@ -322,16 +322,16 @@ None for data. On the Pi, the first deploy needs one owner-performed authorizati
 
 #### Automated
 
-- [x] 3.1 Full suite passes: `uv run pytest`
-- [x] 3.2 httpx2 is a runtime dependency and `uv lock --check` passes
-- [x] 3.3 App tests cover disabled Spotify, authorize redirect, callback rejections and token-free /playback
+- [x] 3.1 Full suite passes: `uv run pytest` -- 6e1b7fa
+- [x] 3.2 httpx2 is a runtime dependency and `uv lock --check` passes -- 6e1b7fa
+- [x] 3.3 App tests cover disabled Spotify, authorize redirect, callback rejections and token-free /playback -- 6e1b7fa
 
 #### Manual
 
-- [ ] 3.4 Deploy with scripts/deploy.sh; app online and /healthz answers
-- [ ] 3.5 Before authorizing, /playback shows authorization_needed and no polling
-- [ ] 3.6 Browser consent lists only the currently-playing permission and /callback reports success
-- [ ] 3.7 Token file is 0600 owned by pi-n8n and the env file is unchanged
+- [x] 3.4 Deploy with scripts/deploy.sh; app online and /healthz answers
+- [x] 3.5 Before authorizing, /playback shows authorization_needed and no polling
+- [x] 3.6 Browser consent lists only the currently-playing permission and /callback reports success
+- [x] 3.7 Token file is 0600 owned by pi-n8n and the env file is unchanged
 - [ ] 3.8 Play, pause, episode and stop are reflected in /playback within about 3 seconds
 - [ ] 3.9 Private-session read observed and recorded
 - [ ] 3.10 Reader resumes after pm2 restart without re-authorization
