@@ -1,12 +1,78 @@
-"""The test pattern and the pure image-to-wire conversion."""
+"""The code-drawn frames and the pure image-to-wire conversion."""
+
+import pytest
+from PIL import Image
 
 from spotify_to_led import frames
-from spotify_to_led.board.transport import frame_to_pixel_colors
+from spotify_to_led.board.transport import frame_to_pixel_colors, validate_frame
 
 # Imported as a module, not as a symbol: a bare `test_pattern` name in this
 # namespace would be collected as a test case.
 
 SIZE = 32
+SUPPORTED_SIZES = (16, 32, 64)
+BLACK = (0, 0, 0)
+
+
+def _lit_pixels(frame: Image.Image) -> list[tuple[int, int]]:
+    width, height = frame.size
+    return [
+        (x, y) for y in range(height) for x in range(width) if frame.getpixel((x, y)) != BLACK
+    ]
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_idle_and_placeholder_are_valid_frames_at_every_supported_size(size: int) -> None:
+    for frame in (frames.idle(size), frames.playing_placeholder(size)):
+        assert frame.mode == "RGB"
+        assert frame.size == (size, size)
+        validate_frame(frame, size)
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_idle_never_exceeds_the_brightness_ceiling(size: int) -> None:
+    frame = frames.idle(size)
+
+    brightest = max(max(pixel) for pixel in frame_to_pixel_colors(frame))
+
+    assert 0 < brightest <= frames.IDLE_MAX_CHANNEL
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_idle_is_mostly_black(size: int) -> None:
+    lit = _lit_pixels(frames.idle(size))
+
+    assert 0 < len(lit) < size * size // 4
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_idle_glyph_is_centered_within_one_pixel(size: int) -> None:
+    lit = _lit_pixels(frames.idle(size))
+    xs = [x for x, _ in lit]
+    ys = [y for _, y in lit]
+
+    left, right = min(xs), size - 1 - max(xs)
+    top, bottom = min(ys), size - 1 - max(ys)
+
+    assert abs(left - right) <= 1, f"horizontal margins {left} and {right}"
+    assert abs(top - bottom) <= 1, f"vertical margins {top} and {bottom}"
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_placeholder_lit_pixels_are_at_full_brightness(size: int) -> None:
+    frame = frames.playing_placeholder(size)
+    lit = _lit_pixels(frame)
+
+    assert lit
+    assert all(255 in frame.getpixel(point) for point in lit)
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_idle_differs_from_the_placeholder(size: int) -> None:
+    idle = frame_to_pixel_colors(frames.idle(size))
+    placeholder = frame_to_pixel_colors(frames.playing_placeholder(size))
+
+    assert idle != placeholder
 
 
 def test_pattern_is_a_32x32_rgb_image() -> None:
