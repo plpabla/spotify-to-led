@@ -41,6 +41,7 @@ class FakeBoard:
         self.failing_connects = failing_connects
         self.failing_pushes = failing_pushes
         self.connects = 0
+        self.connections = 0
         # Every push attempted, including the ones that raised.
         self.pushed: list[Presentation] = []
         self._link_state = LinkState.DOWN
@@ -54,6 +55,11 @@ class FakeBoard:
         if self.connects <= self.failing_connects:
             raise OSError("the board is not reachable")
         self._link_state = LinkState.UP
+        self.connections += 1
+
+    def reconnect(self) -> None:
+        """Bring the link up again, as the library does after the board was off."""
+        self.connections += 1
 
     async def push_frame(self, frame: Image.Image) -> None:
         self.pushed.append(_presentation_of(frame))
@@ -193,6 +199,45 @@ async def test_an_unchanged_presentation_is_not_pushed_again() -> None:
 
     assert board.pushed == [Presentation.PLAYING]
     assert sleep.durations == [1.0] * 10
+
+
+class ReconnectingSleep(FakeSleep):
+    """A `FakeSleep` that brings the link up again at the given sleeps."""
+
+    def __init__(self, board: FakeBoard, sleeps: int, reconnect_at: set[int]) -> None:
+        super().__init__(sleeps)
+        self.board = board
+        self.reconnect_at = reconnect_at
+
+    async def __call__(self, seconds: float) -> None:
+        if len(self.durations) + 1 in self.reconnect_at:
+            self.board.reconnect()
+        await super().__call__(seconds)
+
+
+async def test_a_reconnect_redraws_the_unchanged_presentation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A board switched off and on comes back blank, and the library's own
+    # reconnect does not redraw it; seen on the Pi after S-02's first rollout.
+    board = FakeBoard()
+    sleep = ReconnectingSleep(board, sleeps=6, reconnect_at={3})
+
+    with caplog.at_level(logging.INFO):
+        await run_until_out_of_sleeps(board, scripted(*[NOTHING] * 6), sleep)
+
+    assert board.pushed == [Presentation.IDLE, Presentation.IDLE]
+    assert "board link came up again; redrawing idle" in caplog.text
+
+
+async def test_a_push_that_failed_is_drawn_again_after_the_next_reconnect() -> None:
+    # The first push fails as the link drops; the reconnect is what draws it.
+    board = FakeBoard(failing_pushes=1)
+    sleep = ReconnectingSleep(board, sleeps=5, reconnect_at={2})
+
+    await run_until_out_of_sleeps(board, scripted(*[NOTHING] * 5), sleep)
+
+    assert board.pushed == [Presentation.IDLE, Presentation.IDLE]
 
 
 async def test_playback_starting_and_stopping_pushes_idle_then_placeholder_then_idle(

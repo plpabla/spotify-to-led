@@ -23,10 +23,17 @@ class BoardTransport(Protocol):
     Implementations satisfy this structurally; they do not inherit it.
     `connect` may raise, and `close` must be safe to call after a failed or
     skipped `connect`.
+
+    `connections` counts how many times the link has come up, including
+    reconnects the implementation makes on its own. A board that loses power
+    forgets its frame, so a new count is the signal to draw again.
     """
 
     @property
     def link_state(self) -> LinkState: ...
+
+    @property
+    def connections(self) -> int: ...
 
     async def connect(self) -> None: ...
 

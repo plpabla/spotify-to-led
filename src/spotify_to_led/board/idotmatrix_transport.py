@@ -14,8 +14,10 @@ is retried by the display loop (`display.run_display`) with the same backoff.
 For either kind of retry to reach the board, the library's Bluetooth client
 is discarded after every failed connect and every disconnect (see
 `_discard_stale_link`); without that, a long outage leaves the retries
-failing forever. Re-pushing the current frame after the library reconnects a dropped link
-remains S-03, and nothing here should be read as satisfying FR-013.
+failing forever. A board that loses power comes back blank, so every time the
+link comes up `connections` grows, and the display loop draws again on that.
+Out-of-range drops and their physical tests remain S-03, and nothing here
+should be read as satisfying FR-013 on its own.
 """
 
 import asyncio
@@ -47,6 +49,7 @@ class IDotMatrixBoardTransport:
     ) -> None:
         self._size = size
         self._link_state = LinkState.DOWN
+        self._connections = 0
         self._client = IDotMatrixClient(
             # Passing the size skips the `detect_screen_size` round trip that
             # `connect` would otherwise make.
@@ -69,8 +72,20 @@ class IDotMatrixBoardTransport:
     def link_state(self) -> LinkState:
         return self._link_state
 
+    @property
+    def connections(self) -> int:
+        return self._connections
+
+    def _mark_up(self) -> None:
+        # Counted on the DOWN-to-UP edge only. Our own `connect` and the
+        # library's listener both report the same first connection, in either
+        # order; counting it twice would make the display draw it twice.
+        if self._link_state is LinkState.DOWN:
+            self._link_state = LinkState.UP
+            self._connections += 1
+
     async def _on_connected(self) -> None:
-        self._link_state = LinkState.UP
+        self._mark_up()
 
     async def _on_disconnected(self) -> None:
         self._link_state = LinkState.DOWN
@@ -82,14 +97,17 @@ class IDotMatrixBoardTransport:
 
     async def connect(self) -> None:
         # Failures propagate to the display loop, which is the one place
-        # that logs and retries them. Link state is left to the listener
-        # callbacks, so it stays right across the library's own reconnect
-        # cycles too.
+        # that logs and retries them. The library's own reconnects arrive
+        # through the listener callbacks instead, so the link state and the
+        # connection count stay right across them too.
         try:
             await self._client.connect()
         except Exception:
             self._discard_stale_link()
             raise
+        # The listener runs later, as a scheduled task; marking the link up
+        # here means the count is current before the first frame is chosen.
+        self._mark_up()
 
     def _discard_stale_link(self) -> None:
         """Make the next connect build a fresh Bluetooth client and scan again.

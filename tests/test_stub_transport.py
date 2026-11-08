@@ -29,6 +29,16 @@ async def test_push_writes_a_readable_32x32_rgb_png_at_latest_png(tmp_path: Path
         assert image.getpixel((24, 24)) == (255, 255, 255)
 
 
+async def test_connect_brings_the_link_up_and_counts_it(tmp_path: Path) -> None:
+    transport = PngBoardTransport(tmp_path / "frames", SIZE)
+    assert transport.connections == 0
+
+    await transport.connect()
+
+    assert transport.link_state is LinkState.UP
+    assert transport.connections == 1
+
+
 async def test_connect_creates_the_output_directory(tmp_path: Path) -> None:
     output_dir = tmp_path / "nested" / "frames"
     transport = PngBoardTransport(output_dir, SIZE)

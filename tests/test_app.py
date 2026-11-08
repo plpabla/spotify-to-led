@@ -45,6 +45,8 @@ class CountingTransport:
         self.frames: list[Image.Image] = []
         self.closed = False
         self.connects = 0
+        # Connects that brought the link up, as `BoardTransport` counts them.
+        self.connections = 0
         self.connect_attempted = threading.Event()
         self.pushed = threading.Event()
         self._link_state = LinkState.DOWN
@@ -61,6 +63,7 @@ class CountingTransport:
         self.connects += 1
         self.connect_attempted.set()
         self._link_state = LinkState.UP
+        self.connections += 1
 
     async def push_frame(self, frame: Image.Image) -> None:
         self.frames.append(frame)
@@ -91,6 +94,7 @@ class FailingTransport(CountingTransport):
         if self.failing_connects is None or self.connects <= self.failing_connects:
             raise OSError("the board is not reachable")
         self._link_state = LinkState.UP
+        self.connections += 1
 
 
 class FailingCloseTransport(CountingTransport):

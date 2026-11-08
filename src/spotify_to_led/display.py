@@ -20,14 +20,16 @@ on purpose rather than by accident:
 connects first, retrying forever with a doubling backoff, so a cold boot that
 races BlueZ or a board switched on hours later both end connected without a
 restart. It then samples the believed state about once a second and pushes a
-frame only when the presentation differs from the last one it attempted.
+frame when the presentation differs from the last one it attempted, or when
+the link has come up again since then: a board that was switched off and on
+comes back blank, and the library's own reconnect does not redraw it.
 
 Its boundaries in this slice, so they are not mistaken for oversights:
 
-- A failed push is logged and not retried until the presentation changes.
-  Re-pushing, including after the library reconnects a dropped link, is S-03.
+- A failed push is logged and not retried until the presentation changes or
+  the link comes up again.
 - Only the first connect is retried here. A link that drops later is the
-  library's own auto-reconnect, and nothing redraws the board after it.
+  library's own auto-reconnect; this loop only notices that it came back.
 
 The log lines are the evidence that the board recovers unattended, so they
 have to stay readable in `pm2 logs`: one WARNING per failed connect, with a
@@ -99,16 +101,21 @@ async def run_display(
     able to prevent the application from serving.
     """
     await _connect(transport, sleep)
-    # `None` until the first push, so the first sample always draws.
-    attempted: Presentation | None = None
+    # What was last drawn, and on which connection of the link; `None` until
+    # the first push, so the first sample always draws.
+    attempted: tuple[Presentation, int] | None = None
     while True:
         try:
-            presentation = select_presentation(current())
-            if presentation is not attempted:
+            wanted = (select_presentation(current()), transport.connections)
+            if wanted != attempted:
+                presentation = wanted[0]
+                if attempted is not None and presentation is attempted[0]:
+                    logger.info("board link came up again; redrawing %s", presentation)
+                else:
+                    logger.info("board presentation: %s", presentation)
                 # Recorded before the push, so a failed push is not retried on
-                # every sample; the next change is what draws again.
-                attempted = presentation
-                logger.info("board presentation: %s", presentation)
+                # every sample; the next change or reconnect draws again.
+                attempted = wanted
                 await _push(transport, frame_for(presentation, size))
         except Exception:
             # A bug must not end the display, as in `SpotifyReader.run`.
@@ -146,5 +153,6 @@ async def _push(transport: BoardTransport, frame: Image.Image) -> None:
         await transport.push_frame(frame)
     except Exception:
         logger.exception(
-            "pushing the frame failed; it is not retried until the presentation changes"
+            "pushing the frame failed; it is retried when the presentation changes"
+            " or the link comes up again"
         )

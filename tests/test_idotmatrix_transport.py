@@ -133,3 +133,21 @@ async def test_close_disconnects_a_responsive_client() -> None:
 
     assert client.disconnected
     assert transport.link_state is LinkState.DOWN
+
+
+async def test_each_time_the_link_comes_up_is_counted_once() -> None:
+    # The first connection is reported twice, by our `connect` and by the
+    # library's listener; counting it twice would draw the first frame twice.
+    transport = make_transport()
+    manager = transport._client._connection_manager
+    manager._transport = FailingLink(TimeoutError())  # type: ignore[assignment]
+
+    transport._mark_up()
+    await transport._on_connected()
+    assert transport.connections == 1
+
+    await transport._on_disconnected()
+    await transport._on_connected()
+
+    assert transport.connections == 2
+    assert transport.link_state is LinkState.UP
