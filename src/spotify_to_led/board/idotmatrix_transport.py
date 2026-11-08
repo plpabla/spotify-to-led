@@ -5,19 +5,16 @@ and acknowledgements, so this module only passes the right construction
 arguments and translates the fork's connection events into `LinkState`.
 
 Recovery boundary, recorded so the next reader does not have to re-derive it:
-`set_auto_reconnect(True)` plus `set_heartbeat(...)` retries a link that drops
-after a successful connection, with the library's own bounded backoff
-(5 seconds, growing to at most 60). The library's reconnect loop starts from
-the disconnect callback only, so it does *not* retry a failed initial connect.
-That cold-boot case -- the service starting before the board is reachable --
-is retried by the display loop (`display.run_display`) with the same backoff.
-For either kind of retry to reach the board, the library's Bluetooth client
-is discarded after every failed connect and every disconnect (see
-`_discard_stale_link`); without that, a long outage leaves the retries
-failing forever. A board that loses power comes back blank, so every time the
-link comes up `connections` grows, and the display loop draws again on that.
-Out-of-range drops and their physical tests remain S-03, and nothing here
-should be read as satisfying FR-013 on its own.
+the library's heartbeat (`set_heartbeat`) detects a link that died silently
+and reports it as a disconnect, which sets `LinkState.DOWN`. The library's
+own auto-reconnect is off: its loop reuses the Bluetooth client built by its
+first attempt for every later one, so a stale BlueZ device path could strand
+the link for good. Every connect, the first one and every one after a drop,
+is retried by the display loop (`display.run_display`) instead, and a failed
+connect always discards the client (see `_discard_stale_link`), so each
+retry scans afresh. A board that loses power comes back blank, so every time
+the link comes up `connections` grows, and the display loop draws again on
+that.
 """
 
 import asyncio
@@ -36,7 +33,7 @@ from spotify_to_led.board.transport import (
 logger = logging.getLogger(__name__)
 
 # Well inside pm2's 10 s `kill_timeout`. With the board unreachable,
-# `disconnect` can wait behind the library's in-flight reconnect attempt for
+# `disconnect` can wait behind an in-flight connect attempt for
 # about 30 s, and pm2 would SIGKILL the process before uvicorn finished.
 DISCONNECT_TIMEOUT_SECONDS = 5.0
 
@@ -65,7 +62,9 @@ class IDotMatrixBoardTransport:
                 on_disconnected=self._on_disconnected,
             )
         )
-        self._client.set_auto_reconnect(True)
+        # The display loop is the only party that reconnects; see the module
+        # docstring for why the library's own loop cannot be trusted with it.
+        self._client.set_auto_reconnect(False)
         self._client.set_heartbeat(heartbeat_seconds)
 
     @property
@@ -89,17 +88,14 @@ class IDotMatrixBoardTransport:
 
     async def _on_disconnected(self) -> None:
         self._link_state = LinkState.DOWN
-        # The library's own reconnect loop reuses the client too, and would
-        # hit the same dead BlueZ path after a long outage. The library
-        # schedules this callback before that loop, which waits 5 s before
-        # its first attempt, so the reset lands first.
+        # A drop the heartbeat found or bleak reported leaves the client
+        # holding a BlueZ path that may be gone; the display loop's next
+        # connect must scan afresh, not reuse it.
         self._discard_stale_link()
 
     async def connect(self) -> None:
         # Failures propagate to the display loop, which is the one place
-        # that logs and retries them. The library's own reconnects arrive
-        # through the listener callbacks instead, so the link state and the
-        # connection count stay right across them too.
+        # that logs and retries them.
         try:
             await self._client.connect()
         except Exception:
@@ -123,8 +119,8 @@ class IDotMatrixBoardTransport:
         and a version bump must re-check it.
         """
         manager = self._client._connection_manager
-        # Never discard a link that is up: the library's reconnect may have
-        # won the race to this point.
+        # Never discard a link that is up: a connect may have won the race to
+        # this point.
         if not manager.is_connected():
             manager._transport = None
 

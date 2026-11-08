@@ -73,7 +73,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | done        |
 | S-01 | `spotify-integration`                       | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | done |
 | S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | done |
-| S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | proposed |
+| S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | in-progress |
 | S-04 | `artwork-on-the-board`                      | see the artwork of whatever is playing, and see it change when the item changes                             | S-02             | US-01, FR-006, FR-007, FR-008, FR-016, NFR-01   | proposed |
 | S-05 | `all-item-types-and-frame-reuse`            | see artwork for any item type including podcasts, with repeated artwork never re-rendered                   | S-04             | US-01, FR-010, FR-017                           | proposed |
 | S-06 | `staleness-marker-and-display-rule`         | tell at a glance that the board can no longer vouch for the cover it is showing                             | S-04             | US-02, US-04, FR-004, FR-009, FR-018            | blocked  |
@@ -305,7 +305,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   retry loop crashes the process instead of staying alive: `infrastructure.md` requires the BLE loop
   to be supervised as a task whose failure is caught and reported as link-down, so one unhandled
   exception in it cannot take down the page that would explain it.
-- **Status:** proposed
+- **Status:** in-progress
 
 ### S-04: Artwork of the playing item appears on the board
 

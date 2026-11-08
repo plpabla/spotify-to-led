@@ -62,13 +62,32 @@ class FailingLink:
         raise self.error
 
 
-def use_links(transport: IDotMatrixBoardTransport, *links: FailingLink) -> list[FailingLink]:
+class WorkingLink:
+    """A library transport whose connect succeeds, until `drop` loses it."""
+
+    def __init__(self) -> None:
+        self.is_connected = False
+
+    async def connect(self) -> None:
+        self.is_connected = True
+
+    async def start_notify(self, callback: object) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
+
+
+type Link = FailingLink | WorkingLink
+
+
+def use_links(transport: IDotMatrixBoardTransport, *links: Link) -> list[Link]:
     """Make the library build `links`, in order, whenever it needs a fresh link."""
     manager = transport._client._connection_manager
     pending = list(links)
-    built: list[FailingLink] = []
+    built: list[Link] = []
 
-    def factory(target: object, on_disconnected: object) -> FailingLink:
+    def factory(target: object, on_disconnected: object) -> Link:
         built.append(pending.pop(0))
         return built[-1]
 
@@ -98,9 +117,9 @@ async def test_a_failed_connect_makes_the_next_attempt_use_a_fresh_link() -> Non
     assert len(built) == 2
 
 
-async def test_a_drop_makes_the_librarys_reconnect_use_a_fresh_link() -> None:
-    # The library's own reconnect loop retries with whatever link the manager
-    # holds, so a drop has to discard it just as a failed connect does.
+async def test_a_drop_makes_the_next_connect_use_a_fresh_link() -> None:
+    # The library retries with whatever link the manager holds, so a drop has
+    # to discard it just as a failed connect does.
     transport = make_transport()
     manager = transport._client._connection_manager
     manager._transport = FailingLink(TimeoutError())  # type: ignore[assignment]
@@ -112,8 +131,8 @@ async def test_a_drop_makes_the_librarys_reconnect_use_a_fresh_link() -> None:
 
 
 async def test_a_disconnect_that_finds_the_link_back_up_keeps_it() -> None:
-    # The library's reconnect can win the race to the listener; a live link
-    # must never be thrown away.
+    # A connect can win the race to the listener; a live link must never be
+    # thrown away.
     transport = make_transport()
     manager = transport._client._connection_manager
     live = FailingLink(TimeoutError(), connected=True)
@@ -122,6 +141,54 @@ async def test_a_disconnect_that_finds_the_link_back_up_keeps_it() -> None:
     await transport._on_disconnected()
 
     assert manager._transport is live
+
+
+async def test_a_library_reported_drop_marks_the_link_down_and_starts_no_reconnect_loop() -> None:
+    # The library's loop reuses the link its first attempt built, so it could
+    # strand the board; the display loop is the only party that reconnects.
+    transport = make_transport()
+    manager = transport._client._connection_manager
+    assert manager._auto_reconnect is False
+    built = use_links(transport, WorkingLink())
+    await transport.connect()
+
+    built[0].is_connected = False
+    manager._handle_disconnect()
+    # The library schedules the listener; let it run.
+    await asyncio.sleep(0)
+
+    assert manager._reconnect_loop_task is None
+    assert transport.link_state is LinkState.DOWN
+
+
+async def test_each_connect_after_a_drop_uses_a_fresh_link() -> None:
+    # The research gap: the library's reconnect loop kept retrying with the
+    # link its first attempt built, so a stale BlueZ path stranded the board.
+    transport = make_transport()
+    built = use_links(
+        transport,
+        WorkingLink(),
+        FailingLink(TimeoutError()),
+        FailingLink(TimeoutError()),
+        FailingLink(TimeoutError()),
+        WorkingLink(),
+    )
+    await transport.connect()
+    built[0].is_connected = False
+    transport._client._connection_manager._handle_disconnect()
+    await asyncio.sleep(0)
+
+    for _ in range(3):
+        with pytest.raises(TimeoutError):
+            await transport.connect()
+    await transport.connect()
+
+    after_drop = built[1:]
+    assert len(after_drop) == 4
+    assert len({id(link) for link in after_drop}) == 4
+    assert transport.connections == 2
+    assert transport.link_state is LinkState.UP
+    await transport.close()
 
 
 async def test_close_disconnects_a_responsive_client() -> None:
