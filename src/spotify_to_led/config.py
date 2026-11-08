@@ -45,6 +45,32 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: str = "INFO"
+    # Spotify is optional so that a machine without an account, the laptop and
+    # the test suite, still starts and simply runs no reader.
+    spotify_client_id: str | None = None
+    # Sent verbatim: Spotify matches it character for character against the
+    # registered value, so it is never derived from an incoming request.
+    spotify_redirect_uri: str | None = None
+    # Mutable runtime state written on every token rotation, kept apart from
+    # the env file, which stays read-only configuration.
+    spotify_token_file: Path = Path("var/spotify-token.json")
+
+    @property
+    def spotify_enabled(self) -> bool:
+        """Whether a Spotify client ID is configured, and so a reader should run."""
+        return self.spotify_client_id is not None
+
+    @field_validator("spotify_client_id")
+    @classmethod
+    def _blank_client_id_means_unset(cls, value: str | None) -> str | None:
+        """Read an empty client ID as "not configured" rather than as an ID.
+
+        `.env.example` ships `SPOTIFY_CLIENT_ID=` empty next to a placeholder
+        redirect URI, and a `.env` copied from it must start without Spotify.
+        """
+        if value is not None and not value.strip():
+            return None
+        return value
 
     @field_validator("board_size")
     @classmethod
@@ -76,6 +102,19 @@ class Settings(BaseSettings):
         """
         if self.board_transport == "idotmatrix" and self.idot_mac is None:
             raise ValueError("idot_mac is required when board_transport is 'idotmatrix'")
+        return self
+
+    @model_validator(mode="after")
+    def _require_redirect_uri_for_spotify(self) -> Self:
+        """Reject a client ID without a redirect URI at construction.
+
+        A half-configured Pi would otherwise start and only fail when the
+        owner tries to authorize, far from the setting that caused it.
+        """
+        if self.spotify_enabled and not (self.spotify_redirect_uri or "").strip():
+            raise ValueError(
+                "spotify_redirect_uri is required when spotify_client_id is set"
+            )
         return self
 
 

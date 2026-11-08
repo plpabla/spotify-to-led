@@ -22,10 +22,15 @@ SETTING_KEYS = (
     "HOST",
     "PORT",
     "LOG_LEVEL",
+    "SPOTIFY_CLIENT_ID",
+    "SPOTIFY_REDIRECT_URI",
+    "SPOTIFY_TOKEN_FILE",
     ENV_FILE_VARIABLE,
 )
 
 A_MAC = "11:22:33:44:55:66"
+A_CLIENT_ID = "0123456789abcdef0123456789abcdef"
+A_REDIRECT_URI = "https://led.example.com/callback"
 
 
 @pytest.fixture
@@ -158,3 +163,58 @@ def test_the_process_environment_beats_the_selected_file(
     monkeypatch.setenv("IDOT_MAC", A_MAC)
 
     assert load_settings().idot_mac == A_MAC
+
+
+def test_without_a_client_id_spotify_is_disabled(clean_env: None) -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.spotify_client_id is None
+    assert settings.spotify_redirect_uri is None
+    assert not settings.spotify_enabled
+
+
+def test_the_token_file_defaults_to_the_checkout_var_directory(clean_env: None) -> None:
+    # Relative on purpose: pm2 runs the service from the checkout, which the
+    # daemon user owns, so no extra setup step is needed on the Pi.
+    assert Settings(_env_file=None).spotify_token_file == Path("var/spotify-token.json")
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_an_env_file_copied_from_the_example_leaves_spotify_disabled(
+    clean_env: None, tmp_path: Path, blank: str
+) -> None:
+    # `.env.example` ships an empty client ID next to a placeholder redirect
+    # URI. A laptop `.env` copied from it has to start, not fail validation.
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"SPOTIFY_CLIENT_ID={blank}\nSPOTIFY_REDIRECT_URI={A_REDIRECT_URI}\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.spotify_client_id is None
+    assert not settings.spotify_enabled
+
+
+def test_a_client_id_with_a_redirect_uri_enables_spotify(clean_env: None) -> None:
+    settings = Settings(
+        _env_file=None, spotify_client_id=A_CLIENT_ID, spotify_redirect_uri=A_REDIRECT_URI
+    )
+
+    assert settings.spotify_enabled
+    assert settings.spotify_client_id == A_CLIENT_ID
+    # Verbatim: Spotify compares it character for character.
+    assert settings.spotify_redirect_uri == A_REDIRECT_URI
+
+
+@pytest.mark.parametrize("redirect_uri", [None, "", "  "])
+def test_a_client_id_without_a_redirect_uri_is_rejected_at_construction(
+    clean_env: None, redirect_uri: str | None
+) -> None:
+    # A half-configured Pi must fail at startup, not when the owner first
+    # tries to authorize.
+    with pytest.raises(ValidationError, match="spotify_redirect_uri"):
+        Settings(
+            _env_file=None, spotify_client_id=A_CLIENT_ID, spotify_redirect_uri=redirect_uri
+        )

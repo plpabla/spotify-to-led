@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-`spotify-to-led` is a single-tenant Python 3.14 / FastAPI background service that mirrors the artwork of the currently-playing Spotify item onto an iDotMatrix LED board over Bluetooth, running on a Raspberry Pi. `src/spotify_to_led/main.py` is the real entrypoint: a FastAPI `app` whose lifespan builds a board transport from settings, pushes one frame in a supervised background task, and serves `GET /healthz`. Spotify, cover rendering and the status page are not built yet.
+`spotify-to-led` is a single-tenant Python 3.14 / FastAPI background service that mirrors the artwork of the currently-playing Spotify item onto an iDotMatrix LED board over Bluetooth, running on a Raspberry Pi. `src/spotify_to_led/main.py` is the real entrypoint: a FastAPI `app` whose lifespan builds a board transport from settings, pushes one frame in a supervised background task, and, when `SPOTIFY_CLIENT_ID` is set, runs the Spotify reader (`src/spotify_to_led/spotify/`) as a second supervised task that polls currently-playing every 3 s. It serves `GET /healthz`, `/authorize` and `/callback` (PKCE authorization), and a temporary JSON `/playback` that S-07 replaces. The token set lives in `var/spotify-token.json`, not in the env file. Cover rendering, drawing on the board from Spotify state and the status page are not built yet.
 
 ## Hard rules
 

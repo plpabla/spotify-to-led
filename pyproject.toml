@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.162.0",
+    "httpx2>=2.16.0",
     "idotmatrix-api-client==0.3.0",
     "pillow>=12.2.0",
     "pydantic-settings>=2.0",
@@ -18,7 +19,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx2>=2.16.0",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
 ]
