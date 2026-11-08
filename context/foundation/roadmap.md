@@ -293,7 +293,11 @@ Foundations below assume these are present and do NOT re-scaffold them.
     the link". Note the FR-018 edge: the PRD's non-goal carve-out covers the window while the board
     is *unreachable*, and does not cover a recovered link still presenting an unvouched frame. The
     library exposes `ConnectionListener(on_connected=...)`, which already fires on reconnect, so
-    the hook to re-push from exists.
+    the hook to re-push from exists. Addressed 2026-11-08 in S-02 (`unattended-idle-board`), on
+    the owner's decision: the display loop redraws whenever the link comes up again, and the
+    library's reconnect after a drop now uses a fresh Bluetooth client. Both were verified with a
+    board power-cycle only; this slice still owns the out-of-range test and the FR-013 sign-off.
+    See `context/changes/unattended-idle-board/verification.md`.
 - **Risk:** Separated from S-02 because it is its own success criterion ("the Bluetooth link to the
   board recovers on its own after a drop") and its own failure surface, and because it is testable
   only by physically interfering with the board. The PRD accepts this as unbounded -- no limit on

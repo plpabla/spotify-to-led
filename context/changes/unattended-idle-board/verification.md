@@ -100,6 +100,20 @@ Board on and showing the triangle; Pi power cut 19:15, Spotify stopped while the
 
 Connected on the first attempt. `pm2 show spotify-to-led`: 0 restarts.
 
+## After the review: board power-cycle redraw (2026-11-08)
+
+Found by the owner after the review fixes: switching the board off and on while it showed a frame left it on its own default screen. The library reconnected (`19:32:14 disconnected`, `19:32:21 connected`), but the display loop only pushed on a presentation change, so nothing redrew it. This was the gap the plan left to S-03; the owner chose to close it here. Fix, `e43e150`: `BoardTransport.connections` counts each time the link comes up (once per DOWN-to-UP edge, so the first connection is not drawn twice), and the display loop pushes again when that count changes.
+
+Verified on `e43e150`: board switched off at about 19:40:30 and on again, nobody touching the Pi.
+
+```
+19:40:34 INFO idotmatrix: disconnected from <board address>
+19:40:47 INFO idotmatrix: connected to <board address>
+19:40:48 INFO spotify_to_led.display: board link came up again; redrawing idle
+```
+
+The note came back about 14 s after the board went off. Out-of-range drops are still S-03's to test.
+
 ## Power supply
 
 The Pi (kernel `6.18.34+rpt-rpi-2712`, a Pi 5) is under-powered:
@@ -113,10 +127,10 @@ The boot that never came up (19:02) is consistent with a brownout. This is a hos
 
 ## 7-day unattended run (NFR-02)
 
-Started **2026-11-08 19:31 CET**, at the redeploy of `7fddf47` (the review fixes, including the reset on disconnect). It first started at 19:16 on `4fb1b16`; the review's F1 fix changed runtime behaviour, so the owner chose to redeploy and restart the count. A clean reboot at 19:28 (`systemd-reboot.service`, requested, not a power loss) came just before the redeploy; the app came back by itself after it. The owner chose to start now and carry the power-supply finding as an open risk rather than wait for a new supply. A deploy, a manual restart or a reboot caused by the supply restarts the count. Evidence to read at the end: `pm2 show spotify-to-led` (restarts, uptime), `journalctl --list-boots`, and the display and reader lines in `~/.pm2/logs/spotify-to-led-out.log`.
+Started **2026-11-08 19:40 CET**, at the deploy of `e43e150` (the board redraw after a reconnect). It first started at 19:16 on `4fb1b16` and again at 19:31 on `7fddf47` (the review fixes); each later fix changed runtime behaviour, so the owner chose to redeploy and restart the count. A clean reboot at 19:28 (`systemd-reboot.service`, requested, not a power loss) came just before the 19:31 redeploy; the app came back by itself after it. The owner chose to start now and carry the power-supply finding as an open risk rather than wait for a new supply. A deploy, a manual restart or a reboot caused by the supply restarts the count; the run ends 2026-11-15 19:40 at the earliest. Evidence to read at the end: `pm2 show spotify-to-led` (restarts, uptime), `journalctl --list-boots`, and the display and reader lines in `~/.pm2/logs/spotify-to-led-out.log`.
 
 ## Open follow-ups
 
-- **S-03:** the library's own auto-reconnect after a dropped link would reuse the same transport and fall into the same stale-path trap. After the S-02 review (F1) `_discard_stale_link` also runs from the disconnect listener, guarded so a live link is never discarded, so the library's reconnect builds a fresh client too. This is unit-tested only; S-03's physical drop tests are where it is proven on the board.
+- **S-03:** two S-03 items landed here: the library's own reconnect builds a fresh Bluetooth client after a drop (review F1), and the frame is redrawn whenever the link comes up again (`e43e150`). Both were proven only with a board power-cycle; S-03 still owns the out-of-range drop and the FR-013 sign-off.
 - **Host:** replace or confirm the Pi's power supply (see above).
 - **Pi checkout:** switch back to `main` after the merge.
