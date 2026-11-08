@@ -1,7 +1,7 @@
 ---
 change_id: spotify-integration
 title: Authorize Spotify once and keep reading the playing item unattended (roadmap S-01)
-status: preparing
+status: implementing
 created: 2026-11-08
 updated: 2026-11-08
 archived_at: null
