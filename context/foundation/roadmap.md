@@ -3,7 +3,7 @@ project: spotify-to-led
 version: 1
 status: draft
 created: 2026-11-03
-updated: 2026-11-07
+updated: 2026-11-08
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -71,7 +71,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | F-01 | `app-skeleton-and-board-transport`          | (foundation) a real service package replaces the placeholder, pushing frames through one swappable transport | --               | FR-012, FR-016                                  | done        |
 | F-02 | `pm2-supervised-service`                    | (foundation) the service is supervised by the Pi's existing pm2 daemon, and its logs survive a reboot       | F-01             | FR-014, NFR-02                                  | done        |
 | F-03 | `edge-surface-and-spotify-app-registration` | (foundation) the service's hostname resolves, is gated at the edge, and is registered with Spotify         | --               | Access Control, Existing Infrastructure, FR-001 | done        |
-| S-01 | `spotify-authorization-and-playback-read`   | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | proposed |
+| S-01 | `spotify-integration`                       | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | in-progress |
 | S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | proposed |
 | S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | proposed |
 | S-04 | `artwork-on-the-board`                      | see the artwork of whatever is playing, and see it change when the item changes                             | S-02             | US-01, FR-006, FR-007, FR-008, FR-016, NFR-01   | proposed |
@@ -223,7 +223,8 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Outcome:** Owner can authorize the Spotify account once from a browser on any device, after
   which the service keeps determining what is playing with no further human action for as long as
   the stored credential stays valid.
-- **Change ID:** `spotify-authorization-and-playback-read`
+- **Change ID:** `spotify-integration` (renamed 2026-11-08 from `spotify-authorization-and-playback-read`,
+  the ID the change was actually opened under in `context/changes/`)
 - **PRD refs:** US-02, FR-001, FR-002, FR-003, FR-016
 - **Prerequisites:** F-01, F-03
 - **Parallel with:** F-02
@@ -242,7 +243,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   the authorization code on a login page; re-running the flow fixes it. Superseded, 2026-11-06:
   F-03 found the connector runs on the Pi and routes to `localhost:8000`, so the forwarded-header
   trap no longer applies; pinning the redirect URI from `SPOTIFY_REDIRECT_URI` still stands.
-- **Status:** proposed
+- **Status:** in-progress
 
 ### S-02: Board shows the idle display, unattended, across a cold boot
 
@@ -405,7 +406,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 | F-01       | `app-skeleton-and-board-transport`          | Replace the uv placeholder with a service package and a swappable board transport | yes                   | Run `/10x-plan app-skeleton-and-board-transport`                            |
 | F-02       | `pm2-supervised-service`                    | Supervise the service under pm2 with rotated logs that survive a reboot           | no                    | Needs F-01                                                                  |
 | F-03       | `edge-surface-and-spotify-app-registration` | Publish and gate the service hostname, and register the Spotify redirect URI      | yes                   | Run `/10x-plan edge-surface-and-spotify-app-registration`. Human-only steps |
-| S-01       | `spotify-authorization-and-playback-read`   | Authorize Spotify once and read currently-playing unattended                      | no                    | Needs F-01, F-03                                                            |
+| S-01       | `spotify-integration`                       | Authorize Spotify once and read currently-playing unattended                      | no                    | Needs F-01, F-03                                                            |
 | S-02       | `unattended-idle-board`                     | Show the idle display unattended, surviving a cold boot                           | no                    | North star. Needs F-02, S-01                                                |
 | S-03       | `bluetooth-link-self-recovery`              | Re-establish the board link after a drop with no human action                     | no                    | Needs S-02                                                                  |
 | S-04       | `artwork-on-the-board`                      | Render and display the playing item's artwork at 32x32                            | no                    | Needs S-02. Resolves the rendering-treatment and track-vs-album questions   |
