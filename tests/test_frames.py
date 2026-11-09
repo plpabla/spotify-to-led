@@ -146,7 +146,7 @@ def _busy_frame(size: int) -> Image.Image:
 def _marker_regions(size: int) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
     """Return the block's pixels and the ring's pixels, from the constants."""
     scale = size // 16
-    ring = frames.STALE_MARKER_RING_CELLS * scale
+    ring = frames.STALE_MARKER_RING_PIXELS
     block = frames.STALE_MARKER_CELLS * scale
     outer = block + 2 * ring
     region = {(x, y) for x in range(size - outer, size) for y in range(outer)}

@@ -49,13 +49,14 @@ IDLE_COLOUR: tuple[int, int, int] = (
 )
 PLAYING_COLOUR: tuple[int, int, int] = (0, 255, 0)
 
-# The stale marker, in cells of the 16x16 design grid. Starting values, to be
-# tuned on the real board until the marker is visible from across the room
-# over every cover: a 2x2 amber block, with a 1-cell black ring around it.
-# Amber rather than red, so it reads as a warning and not as an error.
+# The stale marker: a 2x2-cell amber block on the 16x16 design grid, with a
+# black ring around it. The ring is in board pixels, not cells, and does not
+# scale: on the real 32x32 board a 1-cell (2 px) ring made the marker too big,
+# and 1 px already separates the block from any cover. Amber rather than red,
+# so it reads as a warning and not as an error.
 STALE_MARKER_COLOUR: tuple[int, int, int] = (255, 176, 0)
 STALE_MARKER_CELLS = 2
-STALE_MARKER_RING_CELLS = 1
+STALE_MARKER_RING_PIXELS = 1
 
 # The note is designed on the 16x16 grid of the smallest board and scaled up
 # by whole pixels, so every supported size (16, 32, 64) shows the same shape
@@ -121,7 +122,7 @@ def with_stale_marker(frame: Image.Image) -> Image.Image:
     `frame` itself is left untouched.
     """
     scale = frame.width // _GRID
-    ring = STALE_MARKER_RING_CELLS * scale
+    ring = STALE_MARKER_RING_PIXELS
     block = STALE_MARKER_CELLS * scale
     outer = block + 2 * ring
     right = frame.width

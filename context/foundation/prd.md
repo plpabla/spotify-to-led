@@ -167,6 +167,7 @@ Each FR carries a `> Socratic:` blockquote recording the counter-argument consid
 - FR-007: Service can render a cover onto the board's 32x32 resolution, by faithful downscale or by a stylized or dominant-colour treatment, whichever reads better on a pixel board. Priority: must-have
 
   > Socratic: Counter-argument accepted: "a faithful downscale may be the wrong goal" -- at 1024 pixels a shrunk photo may read worse than a stylized or colour-field rendering, and the original wording foreclosed that. Resolution: reworded to permit either treatment. The original "so the album remains recognizable" bar was dropped as untestable at this size; the open question about what "good" means at 32x32 is recorded.
+  > Decided 2026-11-09 (S-04 bake-off on the real board): the treatment is a **boosted downscale** -- area-average downscale, then contrast and saturation raised (`render_boosted` in `src/spotify_to_led/rendering.py`). It beat the plain downscale and a 16-colour palette quantization. The owner judged it the best of the three but not sufficient on its own; AI enhancement is slotted post-v1 as roadmap `S-08`. Acceptance bar: from normal desk viewing distance, every cover in the fixed bake-off set is distinguishable from every other, and none reads worse than its plain downscale. Recognising the album is deliberately not required at this size; that is S-08's goal.
 
 - FR-008: Service can display the rendered cover on the board and replace it when the playing item changes. Priority: must-have
 

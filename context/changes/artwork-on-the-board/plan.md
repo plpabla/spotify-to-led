@@ -440,8 +440,8 @@ None: no stored state is added. Rolling back is the documented `git checkout <sh
 
 #### Manual
 
-- [ ] 1.4 Bake-off run on the Pi's board (service stopped, then restarted with `pm2 start`), judged from desk distance
-- [ ] 1.5 Owner picks the treatment and writes it, plus a falsifiable acceptance bar, into PRD FR-007
+- [x] 1.4 Bake-off run on the Pi's board (service stopped, then restarted with `pm2 start`), judged from desk distance
+- [x] 1.5 Owner picks the treatment and writes it, plus a falsifiable acceptance bar, into PRD FR-007
 - [ ] 1.6 The marker is visible over every cover in the set from across the room, or its constants are tuned until it is
 
 ### Phase 2: Cover pipeline
