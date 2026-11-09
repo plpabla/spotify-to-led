@@ -433,11 +433,11 @@ Foundations below assume these are present and do NOT re-scaffold them.
   - How it fits NFR-01's 5 s budget: a generation call is likely slower. One option is to show
     the plain rendering first and swap in the enhanced frame when it is ready. Owner. Block: no.
   - What "better" means at 32x32, and its falsifiable bar. Same resolution path as FR-007: judge
-    real covers on the real board against the S-04 palette rendering. Owner. Block: no.
+    real covers on the real board against the S-04 plain downscale. Owner. Block: no.
   - The staleness rule has to cover an enhanced frame too: FR-018's marker applies to any cover
     presentation, however it was rendered.
-- **Risk:** Recorded 2026-11-09 from the S-04 bake-off: the owner kept the 16-colour palette
-  treatment for now, but judged none of the three good enough on its own, and wants AI enhancement.
+- **Risk:** Recorded 2026-11-09 from the S-04 bake-off: the owner kept the plain area downscale
+  for now, but judged none of the three good enough on its own, and wants AI enhancement.
   The accepted FR-017 consequence lands here: only rendered frames are cached, not originals, so
   introducing this step discards the whole cache and re-downloads every image. Keep the step
   behind `render_cover` (S-04), and make the cache key carry the renderer's identity (S-05) if
