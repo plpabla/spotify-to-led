@@ -469,13 +469,13 @@ None: no stored state is added. Rolling back is the documented `git checkout <sh
 
 #### Automated
 
-- [x] 4.1 Deploy succeeds: `scripts/deploy.sh` exits 0 and `/healthz` answers on the Pi
-- [x] 4.2 Full suite passes on the deployed commit: `uv run pytest`
+- [x] 4.1 Deploy succeeds: `scripts/deploy.sh` exits 0 and `/healthz` answers on the Pi — af164cb
+- [x] 4.2 Full suite passes on the deployed commit: `uv run pytest` — af164cb
 
 #### Manual
 
-- [x] 4.3 Ten track skips on the Pi each change the board's cover within 5 s (NFR-01), stopwatch or log timestamps
-- [x] 4.4 A podcast episode shows its own artwork
+- [x] 4.3 Ten track skips on the Pi each change the board's cover within 5 s (NFR-01), stopwatch or log timestamps — af164cb
+- [x] 4.4 A podcast episode shows its own artwork — af164cb
 - [ ] 4.5 Cutting the Pi's internet for over 30 s while a cover shows puts the marker on it, and it clears within a few seconds of the connection returning
-- [x] 4.6 Pausing keeps the cover; stopping playback returns to idle
-- [x] 4.7 Docs updated: FR-007 bar, OQ3/OQ5 resolved, S-06 narrowed, CLAUDE.md current
+- [x] 4.6 Pausing keeps the cover; stopping playback returns to idle — af164cb
+- [x] 4.7 Docs updated: FR-007 bar, OQ3/OQ5 resolved, S-06 narrowed, CLAUDE.md current — af164cb
