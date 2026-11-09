@@ -229,14 +229,14 @@ Deploying restarts the 7-day NFR-02 run, which the owner accepted. After merge, 
 
 #### Automated
 
-- [x] 2.1 `scripts/deploy.sh` exits 0 and `/healthz` answers `{"status":"ok"}`
-- [x] 2.2 `pm2 show spotify-to-led` reports `online` with 0 unstable restarts after all four tests
+- [x] 2.1 `scripts/deploy.sh` exits 0 and `/healthz` answers `{"status":"ok"}` — 15c9b87
+- [x] 2.2 `pm2 show spotify-to-led` reports `online` with 0 unstable restarts after all four tests — 15c9b87
 
 #### Manual
 
-- [x] 2.3 (a) Board power-cycle: board redraws the correct frame with no human action
-- [x] 2.4 (b) ~2 min out of range with a Spotify state change while away: board shows the new correct presentation within ~2 min of return
-- [x] 2.5 (c) ~15 min out of range: board recovers within ~2 min of return, log shows retries at the 60 s ceiling, each scanning
+- [x] 2.3 (a) Board power-cycle: board redraws the correct frame with no human action — 15c9b87
+- [x] 2.4 (b) ~2 min out of range with a Spotify state change while away: board shows the new correct presentation within ~2 min of return — 15c9b87
+- [x] 2.5 (c) ~15 min out of range: board recovers within ~2 min of return, log shows retries at the 60 s ceiling, each scanning — 15c9b87
 - [ ] 2.6 (d) ~5 min at the edge of range: board recovers after return with no repeating instant `device ... not found` failures
-- [x] 2.7 `vcgencmd get_throttled` recorded before and after the tests in `verification.md`
-- [x] 2.8 FR-013 sign-off and the restarted 7-day run (start time, earliest end) recorded in `verification.md`
+- [x] 2.7 `vcgencmd get_throttled` recorded before and after the tests in `verification.md` — 15c9b87
+- [x] 2.8 FR-013 sign-off and the restarted 7-day run (start time, earliest end) recorded in `verification.md` — 15c9b87
