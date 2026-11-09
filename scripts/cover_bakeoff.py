@@ -18,11 +18,15 @@ read from `/playback`, work as they are.
 
 The transport comes from the usual settings (`load_settings`,
 `create_transport`), so the same command drives the PNG stub on the laptop
-and the real board on the Pi. On the Pi the service has to be stopped first,
-because the board accepts only one Bluetooth connection:
+and the real board on the Pi. On the Pi the board settings live in
+`/etc/spotify-to-led/env`, which only pm2 points the service at, so the script
+has to be pointed at it too; without that it falls back to `.env` and drives
+the stub. The service has to be stopped first, because the board accepts only
+one Bluetooth connection:
 
     pm2 stop spotify-to-led
-    uv run python scripts/cover_bakeoff.py ...
+    SPOTIFY_TO_LED_ENV_FILE=/etc/spotify-to-led/env \
+        uv run python scripts/cover_bakeoff.py ...
     pm2 start spotify-to-led
 
 Before anything is pushed, a contact sheet is written to

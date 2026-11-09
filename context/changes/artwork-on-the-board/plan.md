@@ -434,9 +434,9 @@ None: no stored state is added. Rolling back is the documented `git checkout <sh
 
 #### Automated
 
-- [x] 1.1 Renderer and marker tests pass: `uv run pytest tests/test_rendering.py tests/test_frames.py`
-- [x] 1.2 Full suite passes: `uv run pytest`
-- [x] 1.3 The bake-off script runs against the PNG stub on the laptop and writes the contact sheet
+- [x] 1.1 Renderer and marker tests pass: `uv run pytest tests/test_rendering.py tests/test_frames.py` — ee27439
+- [x] 1.2 Full suite passes: `uv run pytest` — ee27439
+- [x] 1.3 The bake-off script runs against the PNG stub on the laptop and writes the contact sheet — ee27439
 
 #### Manual
 
