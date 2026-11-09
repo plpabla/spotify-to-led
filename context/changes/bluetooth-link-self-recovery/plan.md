@@ -216,27 +216,27 @@ Deploying restarts the 7-day NFR-02 run, which the owner accepted. After merge, 
 
 #### Automated
 
-- [x] 1.1 Full test suite passes: `uv run pytest`
-- [x] 1.2 New display tests cover drop → failed reconnects with backoff restarting at 5 s → redraw, and a presentation changed while down being drawn after reconnect
-- [x] 1.3 New transport tests cover auto-reconnect disabled (no library reconnect loop on disconnect) and a fresh link for each connect after a drop
-- [x] 1.4 `grep -rn "set_auto_reconnect(True)" src/` returns nothing
+- [x] 1.1 Full test suite passes: `uv run pytest` — 2070a4e
+- [x] 1.2 New display tests cover drop → failed reconnects with backoff restarting at 5 s → redraw, and a presentation changed while down being drawn after reconnect — 2070a4e
+- [x] 1.3 New transport tests cover auto-reconnect disabled (no library reconnect loop on disconnect) and a fresh link for each connect after a drop — 2070a4e
+- [x] 1.4 `grep -rn "set_auto_reconnect(True)" src/` returns nothing — 2070a4e
 
 #### Manual
 
-- [x] 1.5 Laptop run with the stub transport starts, shows idle in `var/frames/latest.png`, and `/healthz` answers
+- [x] 1.5 Laptop run with the stub transport starts, shows idle in `var/frames/latest.png`, and `/healthz` answers — 2070a4e
 
 ### Phase 2: Prove FR-013 on the Pi
 
 #### Automated
 
-- [ ] 2.1 `scripts/deploy.sh` exits 0 and `/healthz` answers `{"status":"ok"}`
-- [ ] 2.2 `pm2 show spotify-to-led` reports `online` with 0 unstable restarts after all four tests
+- [x] 2.1 `scripts/deploy.sh` exits 0 and `/healthz` answers `{"status":"ok"}`
+- [x] 2.2 `pm2 show spotify-to-led` reports `online` with 0 unstable restarts after all four tests
 
 #### Manual
 
-- [ ] 2.3 (a) Board power-cycle: board redraws the correct frame with no human action
-- [ ] 2.4 (b) ~2 min out of range with a Spotify state change while away: board shows the new correct presentation within ~2 min of return
-- [ ] 2.5 (c) ~15 min out of range: board recovers within ~2 min of return, log shows retries at the 60 s ceiling, each scanning
+- [x] 2.3 (a) Board power-cycle: board redraws the correct frame with no human action
+- [x] 2.4 (b) ~2 min out of range with a Spotify state change while away: board shows the new correct presentation within ~2 min of return
+- [x] 2.5 (c) ~15 min out of range: board recovers within ~2 min of return, log shows retries at the 60 s ceiling, each scanning
 - [ ] 2.6 (d) ~5 min at the edge of range: board recovers after return with no repeating instant `device ... not found` failures
-- [ ] 2.7 `vcgencmd get_throttled` recorded before and after the tests in `verification.md`
-- [ ] 2.8 FR-013 sign-off and the restarted 7-day run (start time, earliest end) recorded in `verification.md`
+- [x] 2.7 `vcgencmd get_throttled` recorded before and after the tests in `verification.md`
+- [x] 2.8 FR-013 sign-off and the restarted 7-day run (start time, earliest end) recorded in `verification.md`
