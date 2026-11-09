@@ -456,9 +456,9 @@ None: no stored state is added. Rolling back is the documented `git checkout <sh
 
 #### Automated
 
-- [x] 3.1 Display tests pass: `uv run pytest tests/test_display.py`
-- [x] 3.2 Full suite passes: `uv run pytest`
-- [x] 3.3 App starts and `/healthz` answers with the stub transport: `uv run python -m spotify_to_led.main`, then `curl -fsS http://127.0.0.1:8000/healthz`
+- [x] 3.1 Display tests pass: `uv run pytest tests/test_display.py` — 3f62df2
+- [x] 3.2 Full suite passes: `uv run pytest` — 3f62df2
+- [x] 3.3 App starts and `/healthz` answers with the stub transport: `uv run python -m spotify_to_led.main`, then `curl -fsS http://127.0.0.1:8000/healthz` — 3f62df2
 
 #### Manual
 
