@@ -462,15 +462,15 @@ None: no stored state is added. Rolling back is the documented `git checkout <sh
 
 #### Manual
 
-- [ ] 3.4 On the laptop with the PNG stub and Spotify configured, `var/frames/latest.png` shows the playing cover and changes on skip
+- [x] 3.4 On the laptop with the PNG stub and Spotify configured, `var/frames/latest.png` shows the playing cover and changes on skip — 3f62df2
 - [ ] 3.5 With the laptop's network cut for over 30 s while a cover shows, `latest.png` gains the marker, and loses it after reconnecting
 
 ### Phase 4: Pi rollout and docs
 
 #### Automated
 
-- [ ] 4.1 Deploy succeeds: `scripts/deploy.sh` exits 0 and `/healthz` answers on the Pi
-- [ ] 4.2 Full suite passes on the deployed commit: `uv run pytest`
+- [x] 4.1 Deploy succeeds: `scripts/deploy.sh` exits 0 and `/healthz` answers on the Pi
+- [x] 4.2 Full suite passes on the deployed commit: `uv run pytest`
 
 #### Manual
 
@@ -478,4 +478,4 @@ None: no stored state is added. Rolling back is the documented `git checkout <sh
 - [ ] 4.4 A podcast episode shows its own artwork
 - [ ] 4.5 Cutting the Pi's internet for over 30 s while a cover shows puts the marker on it, and it clears within a few seconds of the connection returning
 - [ ] 4.6 Pausing keeps the cover; stopping playback returns to idle
-- [ ] 4.7 Docs updated: FR-007 bar, OQ3/OQ5 resolved, S-06 narrowed, CLAUDE.md current
+- [x] 4.7 Docs updated: FR-007 bar, OQ3/OQ5 resolved, S-06 narrowed, CLAUDE.md current

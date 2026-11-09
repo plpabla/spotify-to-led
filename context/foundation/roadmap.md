@@ -323,9 +323,13 @@ Foundations below assume these are present and do NOT re-scaffold them.
     treatment? Owner. Block: no -- the PRD states this is not answerable on paper and prescribes
     the resolution path: render a fixed set of real covers both ways on the actual board, judge
     them from normal desk viewing distance, and write the chosen treatment and a falsifiable
-    acceptance bar back into FR-007. Until then FR-007 cannot be failed.
+    acceptance bar back into FR-007. Until then FR-007 cannot be failed. RESOLVED 2026-11-09:
+    a board bake-off of three treatments picked the faithful (area) downscale; FR-007 now carries
+    the treatment and its bar. See `context/changes/artwork-on-the-board/verification.md`.
   - Track artwork or album artwork? Owner. Block: no -- FR-017's cache is keyed on the artwork's
-    own identity specifically so this does not need answering first.
+    own identity specifically so this does not need answering first. RESOLVED 2026-11-09 by the
+    API: a Spotify track has no images of its own, only `album.images`, so there is nothing to
+    choose; episodes use their own images.
 - **Risk:** This is the slice that makes the product worth looking at, and the first one whose
   acceptance bar is genuinely undefined, which is why it carries two non-blocking unknowns rather
   than pretending to a spec it does not have. NFR-01 (the 5-second budget from item change to
@@ -336,6 +340,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
   board keeps whatever presentation it last chose. With S-02's placeholder that is harmless; once
   this slice puts real covers behind the same rule it becomes an unmarked stale cover, which the
   hard rules forbid. So S-04 must either ship with S-06's marker or not ship covers before S-06.
+  Resolved 2026-11-09: S-04 ships FR-018's marker for the case it fully specifies, a cover on show
+  after reads have failed for more than 30 s (a 2x2-cell amber block in a 1 px black ring, top
+  right). S-06 keeps the rest; see its note.
 - **Status:** in-progress
 
 ### S-05: Every item type is covered, and repeated artwork is not re-rendered
@@ -387,7 +394,10 @@ Foundations below assume these are present and do NOT re-scaffold them.
   removing it, and that was accepted explicitly. Note the stated hole in the guarantee: if the
   Bluetooth link is what failed, no marker can be pushed at all and whatever the board last
   received simply stays up. That is recorded in Non-Goals, not treated as a defect, and S-07 is
-  where it becomes visible instead.
+  where it becomes visible instead. Narrowed 2026-11-09: S-04 already marks a cover on show after
+  30 s of failed reads, and its geometry passed a first look on the board. What remains here is the
+  blind-with-no-cover case (still blocked on Open Question 2), completing FR-009's rule, and the
+  marker's cross-room legibility sign-off.
 - **Status:** blocked
 
 ### S-07: One page reports what the service believes, and re-authorizes Spotify
@@ -468,14 +478,14 @@ Foundations below assume these are present and do NOT re-scaffold them.
 2. **What shows when the service is blind and has no cover to fall back on?** -- Owner. Block:
    `S-06`. The single blocking question in this roadmap, and the one to resolve first if you want
    the display rule complete. The PRD states it must be answered before FR-009's rule is complete.
-3. **What counts as a good 32x32 rendering, and what is the falsifiable acceptance bar?** --
+3. **What counts as a good 32x32 rendering, and what is the falsifiable acceptance bar?** -- RESOLVED 2026-11-09 -- a board bake-off chose the faithful (area) downscale over a boosted downscale and a 16-colour palette; FR-007 carries the treatment and its bar (every cover in the fixed set distinguishable from desk distance). The owner judged none sufficient on its own, hence `S-08`. The original question is kept below for the record.
    Owner. Block: none, but it gates `S-04`'s acceptance criteria. Resolved by rendering real covers
    both ways on the real board, then writing the chosen treatment back into FR-007.
 4. **Can the three non-cover visual elements be told apart at 32x32 from across a room?** --
    Owner. Block: none, but it gates the acceptance criteria of `S-02` (idle display), `S-05`
    (generic no-artwork symbol) and `S-06` (staleness marker). Decided by looking at the real board,
    not on paper.
-5. **Track artwork or album artwork?** -- Owner. Block: none; gates `S-04`. FR-017's cache shape
+5. **Track artwork or album artwork?** -- RESOLVED 2026-11-09 -- moot: a Spotify track carries no images of its own, only `album.images`; episodes carry their own. The original question is kept below for the record. Owner. Block: none; gates `S-04`. FR-017's cache shape
    was chosen so this does not need answering first.
 6. **Which `idotmatrix` implementation gets pinned?** -- RESOLVED 2026-11-04:
    `idotmatrix-api-client` 0.3.0, pinned exactly. It is the maintained fork, published under its own
