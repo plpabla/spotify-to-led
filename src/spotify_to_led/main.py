@@ -8,9 +8,12 @@ board or Spotify fault is something to report, never something that takes the
 server down with it.
 
 The display task (`display.run_display`) connects to the board, reconnecting
-with backoff whenever the link is down, and shows the idle frame or the
-temporary playing placeholder from the reader's snapshot, pushing again
-whenever that choice changes or the link comes back.
+with backoff whenever the link is down, and shows the cover of what is playing,
+the playing placeholder while there is no cover to show, or the idle frame,
+from the reader's snapshot. Covers are downloaded by a `CoverLoader` beside
+it, on the Spotify client, and a cover is marked once reads have been failing
+for over 30 s. It pushes again whenever that choice changes or the link comes
+back.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
@@ -33,6 +36,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.config import load_settings
+from spotify_to_led.covers import CoverLoader
 from spotify_to_led.display import run_display
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
@@ -99,11 +103,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     spotify_client: httpx2.AsyncClient | None = None
     reader: SpotifyReader | None = None
     reader_task: asyncio.Task[None] | None = None
+    covers: CoverLoader | None = None
     app.state.spotify_reader = None
     if settings.spotify_enabled:
         spotify_client = create_spotify_client()
         reader = SpotifyReader(spotify_client, settings, TokenStore(settings.spotify_token_file))
         app.state.spotify_reader = reader
+        covers = CoverLoader(spotify_client, settings.board_size)
         # `run()` classifies and logs its own failures, so like the display
         # task it cannot take the server down.
         reader_task = asyncio.create_task(reader.run())
@@ -115,16 +121,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         return reader.snapshot if reader is not None else None
 
     # Started after the reader exists, because `current` closes over it.
-    task = asyncio.create_task(run_display(transport, settings.board_size, current))
+    task = asyncio.create_task(
+        run_display(transport, settings.board_size, current, covers=covers)
+    )
 
     try:
         yield
     finally:
         if reader_task is not None:
             await _cancel(reader_task)
+        # The display first, so it cannot want another cover once the loader
+        # is closed, and the loader before the client its download uses.
+        await _cancel(task)
+        if covers is not None:
+            await covers.aclose()
         if spotify_client is not None:
             await spotify_client.aclose()
-        await _cancel(task)
         try:
             await transport.close()
         except Exception:

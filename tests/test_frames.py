@@ -5,6 +5,7 @@ from PIL import Image
 
 from spotify_to_led import frames
 from spotify_to_led.board.transport import frame_to_pixel_colors, validate_frame
+from spotify_to_led.config import SUPPORTED_BOARD_SIZES
 
 # Imported as a module, not as a symbol: a bare `test_pattern` name in this
 # namespace would be collected as a test case.
@@ -131,3 +132,72 @@ def test_frame_to_pixel_colors_walks_rows_not_columns() -> None:
     assert row_boundary == [(255, 0, 0), (0, 255, 0)], (
         "the red-to-green step must fall mid-row, not mid-column"
     )
+
+
+def _busy_frame(size: int) -> Image.Image:
+    """Return a frame with no black and no marker-coloured pixel anywhere."""
+    frame = Image.new("RGB", (size, size))
+    for y in range(size):
+        for x in range(size):
+            frame.putpixel((x, y), (x * 255 // size, y * 255 // size, 200))
+    return frame
+
+
+def _marker_regions(size: int) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+    """Return the block's pixels and the ring's pixels, from the constants."""
+    scale = size // 16
+    ring = frames.STALE_MARKER_RING_PIXELS
+    block = frames.STALE_MARKER_CELLS * scale
+    outer = block + 2 * ring
+    region = {(x, y) for x in range(size - outer, size) for y in range(outer)}
+    block_pixels = {
+        (x, y)
+        for x in range(size - outer + ring, size - ring)
+        for y in range(ring, ring + block)
+    }
+    return block_pixels, region - block_pixels
+
+
+@pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
+def test_stale_marker_draws_an_amber_block_inside_a_black_ring(size: int) -> None:
+    marked = frames.with_stale_marker(_busy_frame(size))
+    block, ring = _marker_regions(size)
+
+    validate_frame(marked, size)
+    assert block and ring
+    assert all(marked.getpixel(point) == frames.STALE_MARKER_COLOUR for point in block)
+    assert all(marked.getpixel(point) == BLACK for point in ring)
+
+
+@pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
+def test_stale_marker_sits_in_the_top_right_corner(size: int) -> None:
+    block, ring = _marker_regions(size)
+
+    assert (size - 1, 0) in ring
+    assert all(x >= size // 2 and y < size // 2 for x, y in block | ring)
+
+
+@pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
+def test_stale_marker_leaves_the_rest_of_the_frame_unchanged(size: int) -> None:
+    original = _busy_frame(size)
+    marked = frames.with_stale_marker(original)
+    block, ring = _marker_regions(size)
+
+    changed = {
+        (x, y)
+        for y in range(size)
+        for x in range(size)
+        if marked.getpixel((x, y)) != original.getpixel((x, y))
+    }
+
+    assert changed == block | ring
+
+
+@pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
+def test_stale_marker_does_not_mutate_its_input(size: int) -> None:
+    original = _busy_frame(size)
+    before = frame_to_pixel_colors(original)
+
+    frames.with_stale_marker(original)
+
+    assert frame_to_pixel_colors(original) == before

@@ -33,7 +33,7 @@ milestone_status: open
   it runs by itself, and it does not lie.
 - **Source materials:** `context/foundation/prd.md` (v1) and the rest of `context/foundation/`,
   plus the change-scoped research in `context/changes/`.
-- **Done when:** every F-NN and S-NN below is `done`.
+- **Done when:** every F-NN and S-NN below is `done`, except `S-08`, which is post-v1 (M-2).
 - **Scope anchors:** FR-001 through FR-018 (all 18 are must-have), US-01 through US-06, both
   Non-Functional Requirements, the Access Control section, and the four setup deltas named in
   the PRD's Existing Infrastructure section.
@@ -74,10 +74,11 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | S-01 | `spotify-integration`                       | authorize the Spotify account once and have the service keep reading it unattended                          | F-01, F-03       | US-02, FR-001, FR-002, FR-003, FR-016           | done |
 | S-02 | `unattended-idle-board`                     | power-cycle the Pi and have the board come back by itself showing the idle display                          | F-02, S-01       | US-03, US-05, FR-011, FR-012, FR-014, NFR-02    | done |
 | S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | done |
-| S-04 | `artwork-on-the-board`                      | see the artwork of whatever is playing, and see it change when the item changes                             | S-02             | US-01, FR-006, FR-007, FR-008, FR-016, NFR-01   | proposed |
+| S-04 | `artwork-on-the-board`                      | see the artwork of whatever is playing, and see it change when the item changes                             | S-02             | US-01, FR-006, FR-007, FR-008, FR-016, NFR-01   | in-progress |
 | S-05 | `all-item-types-and-frame-reuse`            | see artwork for any item type including podcasts, with repeated artwork never re-rendered                   | S-04             | US-01, FR-010, FR-017                           | proposed |
 | S-06 | `staleness-marker-and-display-rule`         | tell at a glance that the board can no longer vouch for the cover it is showing                             | S-04             | US-02, US-04, FR-004, FR-009, FR-018            | blocked  |
 | S-07 | `status-and-reauthorization-page`           | open one page, read what the service believes and whether the board link is alive, and re-authorize Spotify | S-01, F-03, S-06 | US-02, US-06, FR-004, FR-005, FR-015            | proposed |
+| S-08 | `ai-enhanced-covers`                        | see an AI-enhanced version of the playing cover, made for the 32x32 panel rather than shrunk to it          | S-04, S-05       | -- (PRD v1 non-goal; post-v1, M-2)              | deferred |
 
 ## Streams
 
@@ -90,6 +91,7 @@ in the dependency graph below; this table is the proposed reading order across p
 | B      | Account access        | `F-03` -> `S-01`                     | Starts in parallel with Stream A at `F-01`/`F-03`, joins it at `S-02`. Holds the human-gated edge work.         |
 | C      | What the board shows  | `S-04` -> `S-05` / `S-06`            | The display rule, built up one presentation at a time. `S-05` and `S-06` are siblings, not a chain.             |
 | D      | The owner's window in | `S-07`                               | Standalone tail: the only surface that names *why* the service is blind, which the board deliberately will not. |
+| E      | Beyond v1             | `S-04` -> `S-05` -> `S-08`           | Post-v1 (M-2). Starts only after M-1 closes; the PRD keeps AI-enhanced covers out of v1.                        |
 
 ## Baseline
 
@@ -321,9 +323,13 @@ Foundations below assume these are present and do NOT re-scaffold them.
     treatment? Owner. Block: no -- the PRD states this is not answerable on paper and prescribes
     the resolution path: render a fixed set of real covers both ways on the actual board, judge
     them from normal desk viewing distance, and write the chosen treatment and a falsifiable
-    acceptance bar back into FR-007. Until then FR-007 cannot be failed.
+    acceptance bar back into FR-007. Until then FR-007 cannot be failed. RESOLVED 2026-11-09:
+    a board bake-off of three treatments picked the faithful (area) downscale; FR-007 now carries
+    the treatment and its bar. See `context/changes/artwork-on-the-board/verification.md`.
   - Track artwork or album artwork? Owner. Block: no -- FR-017's cache is keyed on the artwork's
-    own identity specifically so this does not need answering first.
+    own identity specifically so this does not need answering first. RESOLVED 2026-11-09 by the
+    API: a Spotify track has no images of its own, only `album.images`, so there is nothing to
+    choose; episodes use their own images.
 - **Risk:** This is the slice that makes the product worth looking at, and the first one whose
   acceptance bar is genuinely undefined, which is why it carries two non-blocking unknowns rather
   than pretending to a spec it does not have. NFR-01 (the 5-second budget from item change to
@@ -334,7 +340,10 @@ Foundations below assume these are present and do NOT re-scaffold them.
   board keeps whatever presentation it last chose. With S-02's placeholder that is harmless; once
   this slice puts real covers behind the same rule it becomes an unmarked stale cover, which the
   hard rules forbid. So S-04 must either ship with S-06's marker or not ship covers before S-06.
-- **Status:** proposed
+  Resolved 2026-11-09: S-04 ships FR-018's marker for the case it fully specifies, a cover on show
+  after reads have failed for more than 30 s (a 2x2-cell amber block in a 1 px black ring, top
+  right). S-06 keeps the rest; see its note.
+- **Status:** in-progress
 
 ### S-05: Every item type is covered, and repeated artwork is not re-rendered
 
@@ -385,7 +394,15 @@ Foundations below assume these are present and do NOT re-scaffold them.
   removing it, and that was accepted explicitly. Note the stated hole in the guarantee: if the
   Bluetooth link is what failed, no marker can be pushed at all and whatever the board last
   received simply stays up. That is recorded in Non-Goals, not treated as a defect, and S-07 is
-  where it becomes visible instead.
+  where it becomes visible instead. Narrowed 2026-11-09: S-04 already marks a cover on show after
+  30 s of failed reads, and its geometry passed a first look on the board. What remains here is the
+  blind-with-no-cover case (still blocked on Open Question 2), completing FR-009's rule, and the
+  marker's cross-room legibility sign-off. Also carried here: S-04 closed without seeing the marker
+  trigger on hardware (the outage test was not run: unplugging Ethernet left the Pi online over
+  Wi-Fi), so S-06 must make the Pi lose Spotify for over 30 s, e.g. by also disabling Wi-Fi.
+  The blind case includes the playing placeholder too: for an item without artwork, or whose
+  cover failed to download, the placeholder stays up unmarked however long reads fail (S-04
+  review, F7).
 - **Status:** blocked
 
 ### S-07: One page reports what the service believes, and re-authorizes Spotify
@@ -411,6 +428,37 @@ Foundations below assume these are present and do NOT re-scaffold them.
   Cloudflare edge -- is already proven in S-01, which is deliberate.
 - **Status:** proposed
 
+### S-08: AI-enhanced covers (post-v1, M-2)
+
+- **Outcome:** Owner can see the playing item's cover regenerated by an AI step into an image
+  made for the 32x32 panel, rather than a downscale of the original, and see it replace the
+  plain rendering when the item changes.
+- **Change ID:** `ai-enhanced-covers`
+- **PRD refs:** none in v1. AI-enhanced covers are a PRD v1 Non-Goal, recorded as intended
+  afterwards (`shape-notes.md` `## Forward: technical-roadmap`). Planning this slice needs a PRD
+  revision that turns it into a requirement first.
+- **Prerequisites:** S-04 (the `render_cover` seam it replaces), S-05 (the frame cache, which is
+  what makes an expensive render acceptable on every repeat).
+- **Parallel with:** --
+- **Blockers:** M-1 must close first; the hard rules forbid AI-enhanced covers in v1.
+- **Unknowns:**
+  - Where the model runs, and at what cost: on the Pi, or a hosted image API? Owner. Block: yes
+    for planning. The cover leaves the device in the hosted case. Covers are public, so the
+    Spotify refresh credential is the only thing that must never leave the Pi, and it would not.
+  - How it fits NFR-01's 5 s budget: a generation call is likely slower. One option is to show
+    the plain rendering first and swap in the enhanced frame when it is ready. Owner. Block: no.
+  - What "better" means at 32x32, and its falsifiable bar. Same resolution path as FR-007: judge
+    real covers on the real board against the S-04 plain downscale. Owner. Block: no.
+  - The staleness rule has to cover an enhanced frame too: FR-018's marker applies to any cover
+    presentation, however it was rendered.
+- **Risk:** Recorded 2026-11-09 from the S-04 bake-off: the owner kept the plain area downscale
+  for now, but judged none of the three good enough on its own, and wants AI enhancement.
+  The accepted FR-017 consequence lands here: only rendered frames are cached, not originals, so
+  introducing this step discards the whole cache and re-downloads every image. Keep the step
+  behind `render_cover` (S-04), and make the cache key carry the renderer's identity (S-05) if
+  both renderings must coexist.
+- **Status:** deferred
+
 ## Backlog Handoff
 
 | Roadmap ID | Change ID                                   | Suggested issue title                                                             | Ready for `/10x-plan` | Notes                                                                       |
@@ -425,6 +473,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 | S-05       | `all-item-types-and-frame-reuse`            | Cover every item type and reuse rendered frames across reboots                    | no                    | Needs S-04                                                                  |
 | S-06       | `staleness-marker-and-display-rule`         | Add the staleness marker and complete the display-state rule                      | no                    | Needs S-04 **and** Open Question 2 resolved                                 |
 | S-07       | `status-and-reauthorization-page`           | Serve the status page and the Spotify re-authorization action                     | no                    | Needs S-01, F-03, S-06                                                      |
+| S-08       | `ai-enhanced-covers`                        | Regenerate the playing cover with an AI step for the 32x32 panel                  | no                    | Post-v1 (M-2). Needs M-1 closed, S-04, S-05, and a PRD revision             |
 
 ## Open Roadmap Questions
 
@@ -434,14 +483,14 @@ Foundations below assume these are present and do NOT re-scaffold them.
 2. **What shows when the service is blind and has no cover to fall back on?** -- Owner. Block:
    `S-06`. The single blocking question in this roadmap, and the one to resolve first if you want
    the display rule complete. The PRD states it must be answered before FR-009's rule is complete.
-3. **What counts as a good 32x32 rendering, and what is the falsifiable acceptance bar?** --
+3. **What counts as a good 32x32 rendering, and what is the falsifiable acceptance bar?** -- RESOLVED 2026-11-09 -- a board bake-off chose the faithful (area) downscale over a boosted downscale and a 16-colour palette; FR-007 carries the treatment and its bar (every cover in the fixed set distinguishable from desk distance). The owner judged none sufficient on its own, hence `S-08`. The original question is kept below for the record.
    Owner. Block: none, but it gates `S-04`'s acceptance criteria. Resolved by rendering real covers
    both ways on the real board, then writing the chosen treatment back into FR-007.
 4. **Can the three non-cover visual elements be told apart at 32x32 from across a room?** --
    Owner. Block: none, but it gates the acceptance criteria of `S-02` (idle display), `S-05`
    (generic no-artwork symbol) and `S-06` (staleness marker). Decided by looking at the real board,
    not on paper.
-5. **Track artwork or album artwork?** -- Owner. Block: none; gates `S-04`. FR-017's cache shape
+5. **Track artwork or album artwork?** -- RESOLVED 2026-11-09 -- moot: a Spotify track carries no images of its own, only `album.images`; episodes carry their own. The original question is kept below for the record. Owner. Block: none; gates `S-04`. FR-017's cache shape
    was chosen so this does not need answering first.
 6. **Which `idotmatrix` implementation gets pinned?** -- RESOLVED 2026-11-04:
    `idotmatrix-api-client` 0.3.0, pinned exactly. It is the maintained fork, published under its own
@@ -469,7 +518,8 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Sources other than Spotify.** Why parked: PRD Non-Goals -- one source only. No Apple Music, no
   local files, no system-audio detection, no scrobbling.
 - **AI-enhanced covers.** Why parked: PRD Non-Goals for v1, and recorded in
-  `shape-notes.md` `## Forward: technical-roadmap` as intended afterwards. FR-017's cache exists
+  `shape-notes.md` `## Forward: technical-roadmap` as intended afterwards. Now slotted as `S-08`
+  for M-2 (2026-11-09, after the S-04 bake-off). FR-017's cache exists
   partly to prepare for it, because once rendering is expensive, re-deriving the same frame on
   every track change stops being acceptable.
 - **Animated covers.** Why parked: PRD Non-Goals for v1, intended later per the same forward note.
