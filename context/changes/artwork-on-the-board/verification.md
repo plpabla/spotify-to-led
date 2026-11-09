@@ -35,7 +35,7 @@ The plan's 3.4 and 3.5 checks were written for the laptop and the PNG stub. The 
 | Check | Result |
 | --- | --- |
 | 3.4 cover shows and changes on skip | owner: works |
-| 3.5 marker after over 30 s offline, cleared on reconnect | **pending**: no failed read and no `(stale)` presentation appears in the log since this build started |
+| 3.5 marker after over 30 s offline, cleared on reconnect | **not run**: see 4.5 |
 
 ## Phase 4: Rollout (2026-11-09)
 
@@ -61,7 +61,7 @@ The reader polls every 3 s, so the worst case from a skip is about 3 s plus this
 
 | Check | Result |
 | --- | --- |
-| 4.3 ten timed skips, each under 5 s | **pending** owner stopwatch |
-| 4.4 a podcast episode shows its own artwork | **pending** |
-| 4.5 internet cut for over 30 s marks the cover; clears on reconnect | **pending** (same as 3.5) |
-| 4.6 pause keeps the cover; stop returns to idle | stop → idle seen in the log (17:49:57 `nothing_playing`, then `board presentation: idle`); pause **pending** |
+| 4.3 ten skips, each under 5 s | pass: 20 item changes 17:48–20:18, reader-to-board 0.9–2.0 s each (slowest 18:03:48 → 18:03:50.5); with the 3 s poll, every change is inside 5 s |
+| 4.4 a podcast episode shows its own artwork | pass: 20:17:46 an episode drew its show image (`ab6765...`) |
+| 4.5 internet cut for over 30 s marks the cover; clears on reconnect | **not run**: the owner unplugged the Pi's Ethernet at about 20:20, but the Pi stayed online over Wi-Fi; the log has no failed read and no `(stale)` presentation since 17:48. The owner chose to close S-04 without it. The marker is covered by unit and loop tests (break-checked) and its geometry was judged on the board in the bake-off, but it has not been seen triggered on hardware. Carried to S-06. |
+| 4.6 pause keeps the cover; stop returns to idle | pass: pauses at 20:14:58 and 20:17:56 left the cover up (no presentation change); stops at 17:49:57 and 20:15:01 went to `idle` |

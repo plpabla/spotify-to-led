@@ -397,7 +397,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
   where it becomes visible instead. Narrowed 2026-11-09: S-04 already marks a cover on show after
   30 s of failed reads, and its geometry passed a first look on the board. What remains here is the
   blind-with-no-cover case (still blocked on Open Question 2), completing FR-009's rule, and the
-  marker's cross-room legibility sign-off.
+  marker's cross-room legibility sign-off. Also carried here: S-04 closed without seeing the marker
+  trigger on hardware (the outage test was not run: unplugging Ethernet left the Pi online over
+  Wi-Fi), so S-06 must make the Pi lose Spotify for over 30 s, e.g. by also disabling Wi-Fi.
 - **Status:** blocked
 
 ### S-07: One page reports what the service believes, and re-authorizes Spotify
