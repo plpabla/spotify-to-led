@@ -448,17 +448,17 @@ None: no stored state is added. Rolling back is the documented `git checkout <sh
 
 #### Automated
 
-- [x] 2.1 Cover tests pass: `uv run pytest tests/test_covers.py`
-- [x] 2.2 Full suite passes: `uv run pytest`
-- [x] 2.3 No references to the deleted candidates remain: `grep -rn` for their names in `src/` `scripts/` `tests/` returns nothing
+- [x] 2.1 Cover tests pass: `uv run pytest tests/test_covers.py` — bfa4372
+- [x] 2.2 Full suite passes: `uv run pytest` — bfa4372
+- [x] 2.3 No references to the deleted candidates remain: `grep -rn` for their names in `src/` `scripts/` `tests/` returns nothing — bfa4372
 
 ### Phase 3: Display rule and loop
 
 #### Automated
 
-- [ ] 3.1 Display tests pass: `uv run pytest tests/test_display.py`
-- [ ] 3.2 Full suite passes: `uv run pytest`
-- [ ] 3.3 App starts and `/healthz` answers with the stub transport: `uv run python -m spotify_to_led.main`, then `curl -fsS http://127.0.0.1:8000/healthz`
+- [x] 3.1 Display tests pass: `uv run pytest tests/test_display.py`
+- [x] 3.2 Full suite passes: `uv run pytest`
+- [x] 3.3 App starts and `/healthz` answers with the stub transport: `uv run python -m spotify_to_led.main`, then `curl -fsS http://127.0.0.1:8000/healthz`
 
 #### Manual
 

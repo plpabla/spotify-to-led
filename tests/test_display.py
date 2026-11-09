@@ -1,37 +1,93 @@
 """The display rule and the display loop that keeps the board in step with it.
 
-The loop runs against a fake transport and a fake sleep. The sleep records
-each delay instead of waiting, and the scripted last one ends `run_display`
-the way shutdown does, by raising `CancelledError`.
+The loop runs against a fake transport, a fake cover loader and a fake sleep.
+The board records every frame pushed, and each is named by matching it
+against the images the service should draw. The loader answers from states
+the test sets, so no download happens. The sleep records each delay instead
+of waiting, and the scripted last one ends `run_display` the way shutdown
+does, by raising `CancelledError`. The clock stands still at `NOW`; how long
+reads have been failing is set through each snapshot's `failure_since`.
 """
 
 import asyncio
 import logging
 from collections.abc import Callable, Iterator
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from PIL import Image
 
 from spotify_to_led import frames
-from spotify_to_led.board.transport import LinkState, frame_to_pixel_colors
+from spotify_to_led.board.transport import LinkState
+from spotify_to_led.covers import PENDING, CoverState, CoverStatus
 from spotify_to_led.display import (
+    IDLE,
+    PLACEHOLDER,
     Presentation,
-    frame_for,
+    PresentationKind,
     run_display,
     select_presentation,
+    wanted_cover_url,
 )
 from spotify_to_led.spotify.playback import (
     INITIAL_SNAPSHOT,
+    Artwork,
     PlaybackSnapshot,
     PlaybackStatus,
+    PlayingItem,
     ReadFailure,
 )
 
 SIZE = 32
+NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+A_URL = "https://i.scdn.co/image/cover-a"
+B_URL = "https://i.scdn.co/image/cover-b"
 NOTHING = replace(INITIAL_SNAPSHOT, status=PlaybackStatus.NOTHING_PLAYING)
+# Playing, but with no item, so there is no cover to want.
 PLAYING = replace(INITIAL_SNAPSHOT, status=PlaybackStatus.PLAYING)
+
+COVER_A = Image.new("RGB", (SIZE, SIZE), (200, 40, 90))
+COVER_B = Image.new("RGB", (SIZE, SIZE), (30, 90, 200))
+READY_A = CoverState(CoverStatus.READY, COVER_A)
+READY_B = CoverState(CoverStatus.READY, COVER_B)
+FAILED = CoverState(CoverStatus.FAILED)
+
+# Every image the service may push in these tests, by the name assertions use.
+DRAWN: dict[str, Image.Image] = {
+    "idle": frames.idle(SIZE),
+    "placeholder": frames.playing_placeholder(SIZE),
+    "cover a": COVER_A,
+    "cover b": COVER_B,
+    "stale cover a": frames.with_stale_marker(COVER_A),
+}
+
+
+def item(url: str | None) -> PlayingItem:
+    """A track whose only image is at `url`, or one with no artwork at all."""
+    artwork = (Artwork(url=url, width=64, height=64),) if url is not None else ()
+    return PlayingItem(kind="track", id=url, name="A Track", subtitle=None, artwork=artwork)
+
+
+def playing(
+    url: str | None,
+    *,
+    status: PlaybackStatus = PlaybackStatus.PLAYING,
+    failing_for: float | None = None,
+) -> PlaybackSnapshot:
+    """`url`'s item playing; with `failing_for`, reads failing for that many seconds."""
+    snapshot = replace(INITIAL_SNAPSHOT, status=status, item=item(url))
+    if failing_for is None:
+        return snapshot
+    return replace(
+        snapshot,
+        failure=ReadFailure.NETWORK,
+        failure_since=NOW - timedelta(seconds=failing_for),
+    )
+
+
+def cover(url: str, stale: bool = False) -> Presentation:
+    return Presentation(PresentationKind.COVER, url, stale)
 
 
 class FakeBoard:
@@ -43,13 +99,18 @@ class FakeBoard:
         self.failing_reconnects = 0
         self.connects = 0
         self.connections = 0
-        # Every push attempted, including the ones that raised.
-        self.pushed: list[Presentation] = []
+        # Every frame pushed, including the ones whose push raised.
+        self.pushed: list[Image.Image] = []
         self._link_state = LinkState.DOWN
 
     @property
     def link_state(self) -> LinkState:
         return self._link_state
+
+    @property
+    def drawn(self) -> list[str]:
+        """The name in `DRAWN` of every frame pushed, in order."""
+        return [_name_of(frame) for frame in self.pushed]
 
     async def connect(self) -> None:
         self.connects += 1
@@ -71,7 +132,7 @@ class FakeBoard:
         self.failing_reconnects = failing_reconnects
 
     async def push_frame(self, frame: Image.Image) -> None:
-        self.pushed.append(_presentation_of(frame))
+        self.pushed.append(frame)
         if len(self.pushed) <= self.failing_pushes:
             raise OSError("the write was not acknowledged")
 
@@ -79,12 +140,26 @@ class FakeBoard:
         self._link_state = LinkState.DOWN
 
 
-def _presentation_of(frame: Image.Image) -> Presentation:
-    pixels = frame_to_pixel_colors(frame)
-    for presentation in Presentation:
-        if pixels == frame_to_pixel_colors(frame_for(presentation, SIZE)):
-            return presentation
-    raise AssertionError("pushed a frame that is no presentation")
+def _name_of(frame: Image.Image) -> str:
+    for name, expected in DRAWN.items():
+        if frame.size == expected.size and frame.tobytes() == expected.tobytes():
+            return name
+    raise AssertionError("pushed a frame the service should never draw")
+
+
+class FakeCovers:
+    """A `CoverLoader` answering from `states`, which a test changes between samples."""
+
+    def __init__(self, states: dict[str, CoverState] | None = None) -> None:
+        self.states = dict(states or {})
+        # Every `want` call, one per sample.
+        self.wanted: list[str | None] = []
+
+    def want(self, url: str | None) -> None:
+        self.wanted.append(url)
+
+    def state(self, url: str) -> CoverState:
+        return self.states.get(url, PENDING)
 
 
 class FakeSleep:
@@ -100,6 +175,20 @@ class FakeSleep:
             raise asyncio.CancelledError
 
 
+class ActingSleep(FakeSleep):
+    """A `FakeSleep` that runs `actions[n]` at its `n`-th sleep, before the next sample."""
+
+    def __init__(self, sleeps: int, actions: dict[int, Callable[[], None]]) -> None:
+        super().__init__(sleeps)
+        self.actions = actions
+
+    async def __call__(self, seconds: float) -> None:
+        action = self.actions.get(len(self.durations) + 1)
+        if action is not None:
+            action()
+        await super().__call__(seconds)
+
+
 def scripted(*snapshots: PlaybackSnapshot | None) -> Callable[[], PlaybackSnapshot | None]:
     """A snapshot source answering one sample at a time, in order."""
     answers: Iterator[PlaybackSnapshot | None] = iter(snapshots)
@@ -107,66 +196,129 @@ def scripted(*snapshots: PlaybackSnapshot | None) -> Callable[[], PlaybackSnapsh
 
 
 async def run_until_out_of_sleeps(
-    board: FakeBoard, current: Callable[[], PlaybackSnapshot | None], sleep: FakeSleep
+    board: FakeBoard,
+    current: Callable[[], PlaybackSnapshot | None],
+    sleep: FakeSleep,
+    covers: FakeCovers | None = None,
 ) -> None:
     with pytest.raises(asyncio.CancelledError):
-        await run_display(board, SIZE, current, sleep=sleep)
+        await run_display(board, SIZE, current, covers=covers, clock=lambda: NOW, sleep=sleep)
+
+
+# --- the rule -------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("status", "expected"),
+    "snapshot",
     [
-        (PlaybackStatus.UNKNOWN, Presentation.IDLE),
-        (PlaybackStatus.PLAYING, Presentation.PLAYING),
-        (PlaybackStatus.PAUSED, Presentation.PLAYING),
-        (PlaybackStatus.NOTHING_PLAYING, Presentation.IDLE),
-    ],
-)
-def test_each_status_selects_its_presentation(
-    status: PlaybackStatus, expected: Presentation
-) -> None:
-    snapshot = replace(INITIAL_SNAPSHOT, status=status)
-
-    assert select_presentation(snapshot) is expected
-
-
-def test_no_reader_selects_idle() -> None:
-    assert select_presentation(None) is Presentation.IDLE
-
-
-@pytest.mark.parametrize(
-    ("status", "expected"),
-    [
-        (PlaybackStatus.NOTHING_PLAYING, Presentation.IDLE),
-        (PlaybackStatus.PLAYING, Presentation.PLAYING),
-    ],
-)
-def test_a_read_failure_does_not_change_the_presentation(
-    status: PlaybackStatus, expected: Presentation
-) -> None:
-    # Ignored on purpose until S-06 brings the staleness marker.
-    snapshot = replace(
+        None,
         INITIAL_SNAPSHOT,
-        status=status,
-        failure=ReadFailure.NETWORK,
-        failure_since=datetime(2026, 1, 1, tzinfo=UTC),
-    )
+        NOTHING,
+        # Blind with no cover to mark stays as it was: OQ2, S-06's.
+        replace(NOTHING, failure=ReadFailure.NETWORK, failure_since=NOW - timedelta(hours=1)),
+        replace(
+            INITIAL_SNAPSHOT,
+            failure=ReadFailure.AUTHORIZATION_NEEDED,
+            failure_since=NOW - timedelta(hours=1),
+        ),
+    ],
+)
+def test_no_reader_unknown_and_nothing_playing_select_idle(
+    snapshot: PlaybackSnapshot | None,
+) -> None:
+    assert wanted_cover_url(snapshot, SIZE) is None
+    assert select_presentation(snapshot, None, cover(A_URL), NOW) == IDLE
 
-    assert select_presentation(snapshot) is expected
+
+def test_nothing_playing_wants_no_cover_even_with_an_item() -> None:
+    snapshot = replace(playing(A_URL), status=PlaybackStatus.NOTHING_PLAYING)
+
+    assert wanted_cover_url(snapshot, SIZE) is None
 
 
-def test_frame_for_idle_is_the_idle_frame() -> None:
-    frame = frame_for(Presentation.IDLE, SIZE)
+@pytest.mark.parametrize("status", [PlaybackStatus.PLAYING, PlaybackStatus.PAUSED])
+def test_an_item_without_artwork_wants_no_cover_and_selects_the_placeholder(
+    status: PlaybackStatus,
+) -> None:
+    snapshot = playing(None, status=status)
 
-    assert frame_to_pixel_colors(frame) == frame_to_pixel_colors(frames.idle(SIZE))
+    assert wanted_cover_url(snapshot, SIZE) is None
+    assert wanted_cover_url(replace(snapshot, item=None), SIZE) is None
+    assert select_presentation(snapshot, None, cover(A_URL), NOW) == PLACEHOLDER
 
 
-def test_frame_for_playing_is_the_placeholder() -> None:
-    frame = frame_for(Presentation.PLAYING, SIZE)
+@pytest.mark.parametrize("status", [PlaybackStatus.PLAYING, PlaybackStatus.PAUSED])
+def test_a_ready_cover_is_selected_and_a_paused_item_keeps_it(status: PlaybackStatus) -> None:
+    snapshot = playing(A_URL, status=status)
 
-    assert frame_to_pixel_colors(frame) == frame_to_pixel_colors(
-        frames.playing_placeholder(SIZE)
-    )
+    assert wanted_cover_url(snapshot, SIZE) == A_URL
+    assert select_presentation(snapshot, (A_URL, READY_A), PLACEHOLDER, NOW) == cover(A_URL)
+
+
+@pytest.mark.parametrize(
+    ("previous", "expected"),
+    [
+        # The changeover: the old cover stays until the new one is ready.
+        (cover(A_URL), cover(A_URL)),
+        (PLACEHOLDER, PLACEHOLDER),
+        (IDLE, IDLE),
+        # Nothing chosen yet.
+        (None, PLACEHOLDER),
+    ],
+)
+def test_a_pending_cover_keeps_the_previous_presentation(
+    previous: Presentation | None, expected: Presentation
+) -> None:
+    assert select_presentation(playing(B_URL), (B_URL, PENDING), previous, NOW) == expected
+
+
+@pytest.mark.parametrize("previous", [cover(A_URL), PLACEHOLDER, None])
+def test_a_failed_cover_selects_the_placeholder(previous: Presentation | None) -> None:
+    assert select_presentation(playing(B_URL), (B_URL, FAILED), previous, NOW) == PLACEHOLDER
+
+
+@pytest.mark.parametrize(("failing_for", "stale"), [(None, False), (29, False), (31, True)])
+def test_a_cover_is_stale_only_after_more_than_30_s_of_failing_reads(
+    failing_for: float | None, stale: bool
+) -> None:
+    snapshot = playing(A_URL, failing_for=failing_for)
+
+    assert select_presentation(snapshot, (A_URL, READY_A), None, NOW) == cover(A_URL, stale)
+
+
+@pytest.mark.parametrize(("failing_for", "stale"), [(29, False), (31, True)])
+def test_a_cover_kept_through_a_changeover_is_marked_by_the_reads_now(
+    failing_for: float, stale: bool
+) -> None:
+    snapshot = playing(B_URL, failing_for=failing_for)
+
+    chosen = select_presentation(snapshot, (B_URL, PENDING), cover(A_URL), NOW)
+
+    assert chosen == cover(A_URL, stale)
+
+
+def test_the_marker_clears_when_reads_recover() -> None:
+    marked = cover(A_URL, stale=True)
+
+    assert select_presentation(playing(A_URL), (A_URL, READY_A), marked, NOW) == cover(A_URL)
+    assert select_presentation(playing(B_URL), (B_URL, PENDING), marked, NOW) == cover(A_URL)
+
+
+def test_the_placeholder_is_never_marked() -> None:
+    failing = playing(A_URL, failing_for=600)
+
+    assert select_presentation(failing, (A_URL, FAILED), None, NOW) == PLACEHOLDER
+    assert select_presentation(failing, (A_URL, PENDING), PLACEHOLDER, NOW) == PLACEHOLDER
+
+
+def test_presentations_read_plainly_in_the_log() -> None:
+    assert str(IDLE) == "idle"
+    assert str(PLACEHOLDER) == "placeholder"
+    assert str(cover(A_URL)) == f"cover {A_URL}"
+    assert str(cover(A_URL, stale=True)) == f"cover {A_URL} (stale)"
+
+
+# --- the loop: connecting and redrawing -----------------------------------
 
 
 async def test_a_board_that_fails_to_connect_is_retried_with_backoff_until_it_shows_idle() -> None:
@@ -179,7 +331,7 @@ async def test_a_board_that_fails_to_connect_is_retried_with_backoff_until_it_sh
     # Doubling from 5 s, capped at 60 s, then one sample interval.
     assert sleep.durations == [5.0, 10.0, 20.0, 40.0, 60.0, 60.0, 1.0]
     assert board.link_state is LinkState.UP
-    assert board.pushed == [Presentation.IDLE]
+    assert board.drawn == ["idle"]
 
 
 async def test_only_the_first_failed_connect_logs_a_traceback(
@@ -206,7 +358,7 @@ async def test_an_unchanged_presentation_is_not_pushed_again() -> None:
 
     await run_until_out_of_sleeps(board, scripted(*[PLAYING] * 10), sleep)
 
-    assert board.pushed == [Presentation.PLAYING]
+    assert board.drawn == ["placeholder"]
     assert sleep.durations == [1.0] * 10
 
 
@@ -235,7 +387,7 @@ async def test_a_reconnect_redraws_the_unchanged_presentation(
     with caplog.at_level(logging.INFO):
         await run_until_out_of_sleeps(board, scripted(*[NOTHING] * 6), sleep)
 
-    assert board.pushed == [Presentation.IDLE, Presentation.IDLE]
+    assert board.drawn == ["idle", "idle"]
     assert "board link came up again; redrawing idle" in caplog.text
 
 
@@ -246,7 +398,7 @@ async def test_a_push_that_failed_is_drawn_again_after_the_next_reconnect() -> N
 
     await run_until_out_of_sleeps(board, scripted(*[NOTHING] * 5), sleep)
 
-    assert board.pushed == [Presentation.IDLE, Presentation.IDLE]
+    assert board.drawn == ["idle", "idle"]
 
 
 class DroppingSleep(FakeSleep):
@@ -280,7 +432,7 @@ async def test_a_dropped_link_is_reconnected_with_a_fresh_backoff_and_redrawn(
     assert sleep.durations == [5.0, 10.0, 20.0, 40.0, 1.0, 1.0, 5.0, 10.0, 20.0, 1.0]
     assert board.connects == 9
     assert board.link_state is LinkState.UP
-    assert board.pushed == [Presentation.IDLE, Presentation.IDLE]
+    assert board.drawn == ["idle", "idle"]
     assert "board link lost; reconnecting" in caplog.text
     assert "board link came up again; redrawing idle" in caplog.text
 
@@ -292,7 +444,7 @@ async def test_a_presentation_that_changed_while_the_link_was_down_is_drawn_on_r
     await run_until_out_of_sleeps(board, scripted(NOTHING, PLAYING, PLAYING), sleep)
 
     assert sleep.durations == [1.0, 5.0, 1.0]
-    assert board.pushed == [Presentation.IDLE, Presentation.PLAYING]
+    assert board.drawn == ["idle", "placeholder"]
 
 
 async def test_playback_starting_and_stopping_pushes_idle_then_placeholder_then_idle(
@@ -304,7 +456,7 @@ async def test_playback_starting_and_stopping_pushes_idle_then_placeholder_then_
     with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
         await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=6))
 
-    assert board.pushed == [Presentation.IDLE, Presentation.PLAYING, Presentation.IDLE]
+    assert board.drawn == ["idle", "placeholder", "idle"]
     changes = [r for r in caplog.records if "presentation" in r.getMessage()]
     assert len(changes) == 3, "every presentation change is logged"
 
@@ -319,7 +471,7 @@ async def test_a_failed_push_is_logged_and_not_retried_until_the_presentation_ch
         await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=4))
 
     # The failed idle push is not repeated; the change to playing still draws.
-    assert board.pushed == [Presentation.IDLE, Presentation.PLAYING]
+    assert board.drawn == ["idle", "placeholder"]
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1
     assert errors[0].exc_info is not None, "the traceback must reach the log"
@@ -340,7 +492,7 @@ async def test_an_unexpected_error_in_a_sample_is_logged_and_the_loop_keeps_goin
     with caplog.at_level(logging.ERROR, logger="spotify_to_led.display"):
         await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=2))
 
-    assert board.pushed == [Presentation.PLAYING]
+    assert board.drawn == ["placeholder"]
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1
     assert errors[0].exc_info is not None
@@ -393,3 +545,105 @@ async def test_cancelling_while_a_connect_is_in_flight_ends_the_task_without_a_w
     assert task.cancelled(), "the cancellation was swallowed and the loop went on"
     assert board.connects == 1
     assert caplog.records == []
+
+
+# --- the loop: covers -----------------------------------------------------
+
+
+async def test_each_item_change_pushes_its_cover_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A, B_URL: READY_B})
+    current = scripted(*[playing(A_URL)] * 3, *[playing(B_URL)] * 3)
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
+        await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=6), covers)
+
+    assert board.drawn == ["cover a", "cover b"]
+    # Told on every sample; the loader treats a repeat as a no-op.
+    assert covers.wanted == [A_URL] * 3 + [B_URL] * 3
+    assert f"board presentation: cover {B_URL}" in caplog.text
+
+
+async def test_nothing_is_pushed_while_the_next_cover_downloads() -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A})
+    current = scripted(playing(A_URL), *[playing(B_URL)] * 4)
+    sleep = ActingSleep(sleeps=5, actions={4: lambda: covers.states.update({B_URL: READY_B})})
+
+    await run_until_out_of_sleeps(board, current, sleep, covers)
+
+    # Three samples with B pending kept A on the board, unpushed.
+    assert board.drawn == ["cover a", "cover b"]
+
+
+async def test_a_failed_download_shows_the_placeholder_until_a_retry_succeeds() -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A, B_URL: FAILED})
+    current = scripted(playing(A_URL), *[playing(B_URL)] * 3)
+    sleep = ActingSleep(sleeps=4, actions={3: lambda: covers.states.update({B_URL: READY_B})})
+
+    await run_until_out_of_sleeps(board, current, sleep, covers)
+
+    assert board.drawn == ["cover a", "placeholder", "cover b"]
+
+
+async def test_a_reconnect_during_a_changeover_redraws_the_old_cover(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The loader has moved on to B, so A's frame must come from the loop.
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A})
+    current = scripted(playing(A_URL), *[playing(B_URL)] * 3)
+    sleep = ActingSleep(sleeps=4, actions={2: board.reconnect})
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
+        await run_until_out_of_sleeps(board, current, sleep, covers)
+
+    assert board.drawn == ["cover a", "cover a"]
+    assert f"board link came up again; redrawing cover {A_URL}" in caplog.text
+
+
+async def test_the_marker_comes_with_failing_reads_and_goes_when_they_recover(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A})
+    current = scripted(
+        playing(A_URL),
+        playing(A_URL, failing_for=29),
+        playing(A_URL, failing_for=31),
+        playing(A_URL, failing_for=40),
+        playing(A_URL),
+    )
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
+        await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=5), covers)
+
+    assert board.drawn == ["cover a", "stale cover a", "cover a"]
+    assert f"board presentation: cover {A_URL} (stale)" in caplog.text
+
+
+async def test_pausing_keeps_the_cover_and_stopping_returns_to_idle() -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A})
+    current = scripted(
+        playing(A_URL),
+        playing(A_URL, status=PlaybackStatus.PAUSED),
+        NOTHING,
+    )
+
+    await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=3), covers)
+
+    assert board.drawn == ["cover a", "idle"]
+    # Nothing on show wants nothing, which lets the loader drop the cover.
+    assert covers.wanted == [A_URL, A_URL, None]
+
+
+async def test_without_a_loader_an_item_with_artwork_shows_the_placeholder() -> None:
+    board = FakeBoard()
+
+    await run_until_out_of_sleeps(board, scripted(playing(A_URL)), FakeSleep(sleeps=1))
+
+    assert board.drawn == ["placeholder"]

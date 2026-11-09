@@ -6,9 +6,10 @@ Three frames, and one overlay, live here:
   dim music note centered on black. It is on for many hours a day, so it stays
   calm and dark, yet a lit glyph still says the service is running rather than
   dead.
-- `playing_placeholder` is a temporary stand-in for the cover while
-  something is playing: a bright play triangle, unmistakable next to idle at a
-  glance. Cover rendering (S-04) replaces it.
+- `playing_placeholder` stands in for the cover while something is playing
+  and its cover is not on hand: not downloaded yet, failed to download, or
+  not offered at all. A bright play triangle, unmistakable next to idle at a
+  glance. S-05's generic no-artwork symbol (FR-010) replaces it.
 - `test_pattern` is the hardware orientation diagnostic. The service no longer
   shows it; it stays for checking a board's wiring and colour order.
 - `with_stale_marker` is FR-018's staleness marker, drawn over a frame the
@@ -103,7 +104,7 @@ def idle(size: int) -> Image.Image:
 def playing_placeholder(size: int) -> Image.Image:
     """Return a bright right-pointing play triangle about half the panel wide.
 
-    Temporary: cover rendering (S-04) deletes it.
+    The stand-in for a cover the service does not have, until S-05's symbol.
     """
     low = size // 4
     high = size - size // 4 - 1
