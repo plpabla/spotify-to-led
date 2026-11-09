@@ -16,6 +16,7 @@ import httpx2
 import pytest
 from PIL import Image
 
+from spotify_to_led import covers
 from spotify_to_led.board.transport import frame_to_pixel_colors, validate_frame
 from spotify_to_led.covers import (
     CoverLoader,
@@ -156,6 +157,52 @@ def test_select_artwork_takes_the_smallest_image_that_covers_the_board(
 def test_select_artwork_without_artwork_is_none() -> None:
     assert select_artwork(an_item(), SIZE) is None
     assert select_artwork(None, SIZE) is None
+
+
+async def test_a_download_that_trickles_past_the_limit_fails_as_a_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every chunk would arrive inside the per-phase timeout; only the total
+    # bound stops it.
+    monkeypatch.setattr(covers, "FETCH_TIMEOUT_SECONDS", 0.05)
+
+    async def trickle(request: httpx2.Request) -> httpx2.Response:
+        await asyncio.sleep(0.5)
+        return a_cover()
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(trickle))
+
+    with pytest.raises(TimeoutError):
+        await covers.fetch_cover(client, A_URL, SIZE)
+    await client.aclose()
+
+
+@pytest.mark.parametrize("limit", ["MAX_COVER_BYTES", "MAX_COVER_PIXELS"])
+async def test_a_download_too_large_to_be_a_cover_fails(
+    monkeypatch: pytest.MonkeyPatch, limit: str
+) -> None:
+    # The 64x64 test cover is a few hundred bytes and 4096 pixels.
+    monkeypatch.setattr(covers, limit, 100)
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(ImageServer([a_cover()])))
+
+    with pytest.raises(covers.CoverFetchError):
+        await covers.fetch_cover(client, A_URL, SIZE)
+    await client.aclose()
+
+
+async def test_a_download_that_finishes_after_its_url_was_dropped_changes_nothing() -> None:
+    # As if cancellation of A's download had been swallowed: it completes
+    # while B is the wanted cover, and must not answer for B.
+    server = ImageServer([])
+    server.answers = [server.hang, a_cover()]
+    loader = a_loader(server, FakeSleep())
+    loader.want(ANOTHER_URL)
+    await until(lambda: len(server.requests) == 1)
+
+    await loader._load(A_URL)
+
+    assert loader.state(ANOTHER_URL).status is CoverStatus.PENDING
+    await loader.aclose()
 
 
 # --- loader ---------------------------------------------------------------

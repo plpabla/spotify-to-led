@@ -50,6 +50,12 @@ logger = logging.getLogger(__name__)
 # what is left for one download. Passed per request, because the shared
 # client's defaults belong to the Spotify reader.
 FETCH_TIMEOUT_SECONDS = 4.0
+# Spotify's covers are a few kilobytes at 64 px and a few hundred at 640 px;
+# anything far beyond that is not a cover, and decoding it would cost memory
+# and event-loop time on the Pi. Checked on the body and on the image header,
+# before the pixels are decoded.
+MAX_COVER_BYTES = 2_000_000
+MAX_COVER_PIXELS = 4096 * 4096
 # The same shape as the board connect retry (`display.CONNECT_RETRY_*`): 5 s
 # doubling to 60 s, restarted for each URL. Read at call time, not bound as
 # defaults, so tests can shorten them.
@@ -107,10 +113,19 @@ async def fetch_cover(client: httpx2.AsyncClient, url: str, size: int) -> Image.
     Raises on a transport error or timeout, a non-2xx status, or a body that
     does not decode as an image.
     """
-    response = await client.get(url, timeout=FETCH_TIMEOUT_SECONDS)
+    # httpx2's timeout bounds each phase, and the read timeout restarts with
+    # every chunk, so a trickling server could outlast it; this bounds the
+    # whole download. The per-request value still keeps the shared client's
+    # defaults out of it.
+    async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
+        response = await client.get(url, timeout=FETCH_TIMEOUT_SECONDS)
     if not response.is_success:
         raise CoverFetchError(f"HTTP {response.status_code}")
+    if len(response.content) > MAX_COVER_BYTES:
+        raise CoverFetchError(f"body of {len(response.content)} bytes")
     with Image.open(BytesIO(response.content)) as image:
+        if image.width * image.height > MAX_COVER_PIXELS:
+            raise CoverFetchError(f"image of {image.width}x{image.height} pixels")
         # `open` reads only the header; `load` decodes the rest, so a
         # truncated body fails here rather than somewhere in the render.
         image.load()
@@ -178,6 +193,10 @@ class CoverLoader:
             try:
                 frame = await fetch_cover(self._client, url, self._size)
             except Exception as error:
+                if self._url != url:
+                    # Cancellation should have stopped this task already; a
+                    # library that swallowed it must not leave a stale answer.
+                    return
                 # The traceback once, for diagnosis; after that one line per
                 # attempt, as for the board connect.
                 logger.warning(
@@ -193,6 +212,8 @@ class CoverLoader:
                 await self._sleep(delay)
                 delay = min(delay * 2, COVER_RETRY_MAX_SECONDS)
             else:
+                if self._url != url:
+                    return
                 self._state = CoverState(CoverStatus.READY, frame)
                 logger.info("cover ready: %s", url)
                 return

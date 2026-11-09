@@ -400,6 +400,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
   marker's cross-room legibility sign-off. Also carried here: S-04 closed without seeing the marker
   trigger on hardware (the outage test was not run: unplugging Ethernet left the Pi online over
   Wi-Fi), so S-06 must make the Pi lose Spotify for over 30 s, e.g. by also disabling Wi-Fi.
+  The blind case includes the playing placeholder too: for an item without artwork, or whose
+  cover failed to download, the placeholder stays up unmarked however long reads fail (S-04
+  review, F7).
 - **Status:** blocked
 
 ### S-07: One page reports what the service believes, and re-authorizes Spotify

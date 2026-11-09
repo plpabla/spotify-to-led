@@ -286,6 +286,15 @@ def test_a_cover_is_stale_only_after_more_than_30_s_of_failing_reads(
     assert select_presentation(snapshot, (A_URL, READY_A), None, NOW) == cover(A_URL, stale)
 
 
+@pytest.mark.parametrize(("read_ago", "stale"), [(29, False), (31, True)])
+def test_a_cover_is_stale_when_reads_stop_without_failing(read_ago: float, stale: bool) -> None:
+    # A reader that has stopped never records a failure; only the age of its
+    # last good read can tell.
+    snapshot = replace(playing(A_URL), last_read_at=NOW - timedelta(seconds=read_ago))
+
+    assert select_presentation(snapshot, (A_URL, READY_A), None, NOW) == cover(A_URL, stale)
+
+
 @pytest.mark.parametrize(("failing_for", "stale"), [(29, False), (31, True)])
 def test_a_cover_kept_through_a_changeover_is_marked_by_the_reads_now(
     failing_for: float, stale: bool
@@ -392,13 +401,14 @@ async def test_a_reconnect_redraws_the_unchanged_presentation(
 
 
 async def test_a_push_that_failed_is_drawn_again_after_the_next_reconnect() -> None:
-    # The first push fails as the link drops; the reconnect is what draws it.
+    # The first push fails; its retry lands on the next sample, and the
+    # reconnect after that still draws again.
     board = FakeBoard(failing_pushes=1)
     sleep = ReconnectingSleep(board, sleeps=5, reconnect_at={2})
 
     await run_until_out_of_sleeps(board, scripted(*[NOTHING] * 5), sleep)
 
-    assert board.drawn == ["idle", "idle"]
+    assert board.drawn == ["idle", "idle", "idle"]
 
 
 class DroppingSleep(FakeSleep):
@@ -461,20 +471,43 @@ async def test_playback_starting_and_stopping_pushes_idle_then_placeholder_then_
     assert len(changes) == 3, "every presentation change is logged"
 
 
-async def test_a_failed_push_is_logged_and_not_retried_until_the_presentation_changes(
+async def test_a_failed_push_is_retried_with_a_doubling_delay_until_it_lands(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    board = FakeBoard(failing_pushes=1)
-    current = scripted(NOTHING, NOTHING, NOTHING, PLAYING)
+    board = FakeBoard(failing_pushes=2)
 
     with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
-        await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=4))
+        await run_until_out_of_sleeps(board, scripted(*[NOTHING] * 6), FakeSleep(sleeps=6))
 
-    # The failed idle push is not repeated; the change to playing still draws.
+    # Fails at the first sample, again 1 s later, and lands 2 s after that;
+    # nothing is pushed once it has.
+    assert board.drawn == ["idle", "idle", "idle"]
+    warnings = [r for r in caplog.records if "pushing the frame failed" in r.getMessage()]
+    assert [w.getMessage().rsplit(" ", 2)[1] for w in warnings] == ["1.0", "2.0"]
+    assert warnings[0].exc_info is not None, "the traceback must reach the log"
+    assert not warnings[1].exc_info, "one traceback per presentation"
+
+
+async def test_a_new_presentation_is_pushed_at_once_even_while_a_retry_waits() -> None:
+    board = FakeBoard(failing_pushes=1)
+    current = scripted(NOTHING, PLAYING, PLAYING)
+
+    await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=3))
+
     assert board.drawn == ["idle", "placeholder"]
-    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
-    assert len(errors) == 1
-    assert errors[0].exc_info is not None, "the traceback must reach the log"
+
+
+async def test_a_stale_marker_whose_push_failed_is_retried_rather_than_left_unmarked() -> None:
+    # The cover is drawn, then reads fail for over 30 s and the marked push
+    # fails; the board must not be left with the unmarked cover.
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A})
+    sleep = ActingSleep(sleeps=4, actions={1: lambda: setattr(board, "failing_pushes", 2)})
+    current = scripted(playing(A_URL), *[playing(A_URL, failing_for=31)] * 3)
+
+    await run_until_out_of_sleeps(board, current, sleep, covers)
+
+    assert board.drawn == ["cover a", "stale cover a", "stale cover a"]
 
 
 async def test_an_unexpected_error_in_a_sample_is_logged_and_the_loop_keeps_going(

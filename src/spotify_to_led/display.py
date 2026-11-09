@@ -17,10 +17,13 @@ a reader or a download. The rule as it stands:
   cover replaces the placeholder once it succeeds.
 - While the wanted cover downloads, the previous presentation stays, so an
   item change goes from one cover straight to the next without a flash in
-  between. With nothing shown yet, that is the placeholder.
+  between. That includes idle: playback starting from idle keeps idle until
+  the first cover is ready. Only before anything was chosen at all does a
+  pending cover show the placeholder.
 - A cover, newly chosen or kept through a changeover, is stale once reads
-  have been failing for more than `STALE_AFTER_SECONDS`, and is drawn with
-  FR-018's marker until a read succeeds again.
+  have been failing, or no read has succeeded, for more than
+  `STALE_AFTER_SECONDS`, and is drawn with FR-018's marker until a read
+  succeeds again.
 
 `run_display` is the task that owns the board for the process lifetime. Every
 connect is retried here, forever with a doubling backoff: the first one, so a
@@ -39,9 +42,10 @@ cover it last chose rather than asking the loader for it, because during a
 changeover the loader has already moved on to the next cover while the board
 still shows, and after a reconnect redraws, the previous one.
 
-Its boundary in this slice, so it is not mistaken for an oversight: a failed
-push is logged and not retried until the presentation changes or the link
-comes up again.
+A failed push is retried while the same presentation stays wanted, 1 s
+doubling to 60 s, restarted for each new presentation. Once the board can show
+a stale marker, a push that failed silently would leave an unmarked cover up
+for the whole outage, which the hard rules forbid.
 
 The log lines are the evidence that the board recovers unattended, so they
 have to stay readable in `pm2 logs`: INFO when the link is lost, one WARNING
@@ -80,6 +84,10 @@ SAMPLE_INTERVAL_SECONDS = 1.0
 # FR-018's grace: a blip of failed reads leaves the cover unmarked, a cover
 # the service has not been able to vouch for in longer than this is marked.
 STALE_AFTER_SECONDS = 30
+# A failed push is retried while its presentation stays wanted: the next
+# sample, then doubling to 60 s. Restarted for each new presentation.
+PUSH_RETRY_INITIAL_SECONDS = 1.0
+PUSH_RETRY_MAX_SECONDS = 60.0
 
 Clock = Callable[[], datetime]
 Sleep = Callable[[float], Awaitable[None]]
@@ -150,8 +158,8 @@ def select_presentation(
     if state.status is CoverStatus.READY:
         chosen = Presentation(PresentationKind.COVER, url)
     elif state.status is CoverStatus.PENDING:
-        # The changeover: whatever is on the board stays until the new cover
-        # is ready, rather than flashing the placeholder in between.
+        # The changeover: whatever was chosen last, idle included, stays until
+        # the new cover is ready, rather than flashing the placeholder.
         chosen = previous if previous is not None else PLACEHOLDER
     else:
         return PLACEHOLDER
@@ -163,9 +171,12 @@ def select_presentation(
 
 
 def _is_stale(snapshot: PlaybackSnapshot, now: datetime) -> bool:
-    return snapshot.failure_since is not None and now - snapshot.failure_since > timedelta(
-        seconds=STALE_AFTER_SECONDS
-    )
+    limit = timedelta(seconds=STALE_AFTER_SECONDS)
+    if snapshot.failure_since is not None and now - snapshot.failure_since > limit:
+        return True
+    # Reads that stop without failing, such as a reader task that has ended,
+    # never set `failure_since`; the age of the last good read still shows it.
+    return snapshot.last_read_at is not None and now - snapshot.last_read_at > limit
 
 
 async def run_display(
@@ -193,6 +204,10 @@ async def run_display(
     # The URL and frame of the cover last chosen, kept here because the loader
     # forgets it as soon as the next cover is wanted.
     retained: tuple[str, Image.Image] | None = None
+    # Whether the last push failed, and when and how soon to try it again.
+    push_failed = False
+    retry_in = 0.0
+    retry_delay = PUSH_RETRY_INITIAL_SECONDS
     while True:
         try:
             if transport.link_state is LinkState.DOWN:
@@ -220,10 +235,24 @@ async def run_display(
                     logger.info("board link came up again; redrawing %s", presentation)
                 else:
                     logger.info("board presentation: %s", presentation)
-                # Recorded before the push, so a failed push is not retried on
-                # every sample; the next change or reconnect draws again.
+                # Recorded before the push, so a failed push is retried on its
+                # own backoff below rather than on every sample.
                 attempted = wanted
-                await _push(transport, _frame_for(presentation, size, retained))
+                retry_delay = PUSH_RETRY_INITIAL_SECONDS
+                due = True
+            elif push_failed:
+                retry_in -= SAMPLE_INTERVAL_SECONDS
+                due = retry_in <= 0
+            else:
+                due = False
+            if due:
+                first = retry_delay == PUSH_RETRY_INITIAL_SECONDS
+                push_failed = not await _push(
+                    transport, _frame_for(wanted[0], size, retained), retry_delay, first
+                )
+                if push_failed:
+                    retry_in = retry_delay
+                    retry_delay = min(retry_delay * 2, PUSH_RETRY_MAX_SECONDS)
         except Exception:
             # A bug must not end the display, as in `SpotifyReader.run`.
             logger.exception("unexpected error in the display loop; it keeps running")
@@ -271,11 +300,20 @@ async def _connect(transport: BoardTransport, sleep: Sleep) -> None:
             return
 
 
-async def _push(transport: BoardTransport, frame: Image.Image) -> None:
+async def _push(
+    transport: BoardTransport, frame: Image.Image, retry_in: float, first: bool
+) -> bool:
+    """Push `frame`; on failure log it and return `False`, never raise."""
     try:
         await transport.push_frame(frame)
-    except Exception:
-        logger.exception(
-            "pushing the frame failed; it is retried when the presentation changes"
-            " or the link comes up again"
+    except Exception as error:
+        # The traceback once per presentation, as for a failed connect.
+        logger.warning(
+            "pushing the frame failed (%s: %s); retrying in %s s",
+            type(error).__name__,
+            error,
+            retry_in,
+            exc_info=first,
         )
+        return False
+    return True
