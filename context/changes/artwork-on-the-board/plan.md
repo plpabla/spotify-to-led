@@ -448,9 +448,9 @@ None: no stored state is added. Rolling back is the documented `git checkout <sh
 
 #### Automated
 
-- [ ] 2.1 Cover tests pass: `uv run pytest tests/test_covers.py`
-- [ ] 2.2 Full suite passes: `uv run pytest`
-- [ ] 2.3 No references to the deleted candidates remain: `grep -rn` for their names in `src/` `scripts/` `tests/` returns nothing
+- [x] 2.1 Cover tests pass: `uv run pytest tests/test_covers.py`
+- [x] 2.2 Full suite passes: `uv run pytest`
+- [x] 2.3 No references to the deleted candidates remain: `grep -rn` for their names in `src/` `scripts/` `tests/` returns nothing
 
 ### Phase 3: Display rule and loop
 
