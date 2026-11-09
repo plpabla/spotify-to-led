@@ -162,8 +162,10 @@ async def test_a_library_reported_drop_marks_the_link_down_and_starts_no_reconne
 
 
 async def test_each_connect_after_a_drop_uses_a_fresh_link() -> None:
-    # The research gap: the library's reconnect loop kept retrying with the
-    # link its first attempt built, so a stale BlueZ path stranded the board.
+    # The display loop's path after a drop: every connect, failed or not,
+    # starts from a fresh link, so a stale BlueZ path cannot strand the board.
+    # The library's own loop coming back is guarded by
+    # `test_a_library_reported_drop_marks_the_link_down_and_starts_no_reconnect_loop`.
     transport = make_transport()
     built = use_links(
         transport,

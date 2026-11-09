@@ -1,7 +1,7 @@
 ---
 change_id: bluetooth-link-self-recovery
 title: Board link comes back on its own after a drop (roadmap S-03)
-status: implemented
+status: impl_reviewed
 created: 2026-11-08
 updated: 2026-11-09
 archived_at: null
