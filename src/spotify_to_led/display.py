@@ -16,27 +16,27 @@ on purpose rather than by accident:
 - `failure` is ignored. Marking a stale cover (FR-018) arrives with S-06;
   until then the placeholder is not a cover, so there is nothing to mark.
 
-`run_display` is the task that owns the board for the process lifetime. It
-connects first, retrying forever with a doubling backoff, so a cold boot that
-races BlueZ or a board switched on hours later both end connected without a
-restart. It then samples the believed state about once a second and pushes a
-frame when the presentation differs from the last one it attempted, or when
-the link has come up again since then: a board that was switched off and on
-comes back blank, and the library's own reconnect does not redraw it.
+`run_display` is the task that owns the board for the process lifetime. Every
+connect is retried here, forever with a doubling backoff: the first one, so a
+cold boot that races BlueZ or a board switched on hours later both end
+connected without a restart, and every one after the link drops, so a board
+switched off and on, or briefly out of range, comes back the same way. The
+backoff starts over at 5 s for each outage. Between connects it samples the
+believed state about once a second and pushes a frame when the presentation
+differs from the last one it attempted, or when the link has come up again
+since then: a board that was switched off and on comes back blank.
 
-Its boundaries in this slice, so they are not mistaken for oversights:
-
-- A failed push is logged and not retried until the presentation changes or
-  the link comes up again.
-- Only the first connect is retried here. A link that drops later is the
-  library's own auto-reconnect; this loop only notices that it came back.
+Its boundary in this slice, so it is not mistaken for an oversight: a failed
+push is logged and not retried until the presentation changes or the link
+comes up again.
 
 The log lines are the evidence that the board recovers unattended, so they
-have to stay readable in `pm2 logs`: one WARNING per failed connect, with a
-traceback only on the first, INFO on connect, and INFO on each presentation
-change. Each attempt also gets the library's own INFO "connecting to" line,
-and a scan for an absent board takes about 30 s, so at the 60 s ceiling a
-board that is off all day costs about 2,000 lines.
+have to stay readable in `pm2 logs`: INFO when the link is lost, one WARNING
+per failed connect, with a traceback only on the first of each outage, INFO
+on connect, and INFO on each presentation change. Each attempt also gets the
+library's own INFO "connecting to" line, and a scan for an absent board takes
+about 30 s, so at the 60 s ceiling a board that is off all day costs about
+2,000 lines, whether it was off from boot or switched off later.
 """
 
 import asyncio
@@ -47,14 +47,14 @@ from enum import StrEnum
 from PIL import Image
 
 from spotify_to_led import frames
-from spotify_to_led.board.transport import BoardTransport
+from spotify_to_led.board.transport import BoardTransport, LinkState
 from spotify_to_led.spotify.playback import PlaybackSnapshot, PlaybackStatus
 
 logger = logging.getLogger(__name__)
 
-# The same 5 s doubling to 60 s backoff the library uses for its own reconnect,
-# so the two retry paths read alike in the log. Read at call time, not bound
-# as defaults, so tests can shorten them.
+# One retry path for the first connect and every reconnect: 5 s doubling to
+# 60 s, restarted for each outage. Read at call time, not bound as defaults,
+# so tests can shorten them.
 CONNECT_RETRY_INITIAL_SECONDS = 5.0
 CONNECT_RETRY_MAX_SECONDS = 60.0
 # The reader polls every 3 s, so sampling every second puts a change on the
@@ -106,6 +106,11 @@ async def run_display(
     attempted: tuple[Presentation, int] | None = None
     while True:
         try:
+            if transport.link_state is LinkState.DOWN:
+                # `attempted` survives the reconnect, so the grown connection
+                # count makes this same sample redraw.
+                logger.info("board link lost; reconnecting")
+                await _connect(transport, sleep)
             wanted = (select_presentation(current()), transport.connections)
             if wanted != attempted:
                 presentation = wanted[0]

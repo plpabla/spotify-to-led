@@ -40,6 +40,7 @@ class FakeBoard:
     def __init__(self, *, failing_connects: int = 0, failing_pushes: int = 0) -> None:
         self.failing_connects = failing_connects
         self.failing_pushes = failing_pushes
+        self.failing_reconnects = 0
         self.connects = 0
         self.connections = 0
         # Every push attempted, including the ones that raised.
@@ -54,12 +55,20 @@ class FakeBoard:
         self.connects += 1
         if self.connects <= self.failing_connects:
             raise OSError("the board is not reachable")
+        if self.failing_reconnects:
+            self.failing_reconnects -= 1
+            raise OSError("the board is not reachable")
         self._link_state = LinkState.UP
         self.connections += 1
 
     def reconnect(self) -> None:
-        """Bring the link up again, as the library does after the board was off."""
+        """Bring the link up again without it having been seen down."""
         self.connections += 1
+
+    def drop(self, *, failing_reconnects: int = 0) -> None:
+        """Lose the link; the next `failing_reconnects` connects then fail."""
+        self._link_state = LinkState.DOWN
+        self.failing_reconnects = failing_reconnects
 
     async def push_frame(self, frame: Image.Image) -> None:
         self.pushed.append(_presentation_of(frame))
@@ -218,8 +227,8 @@ class ReconnectingSleep(FakeSleep):
 async def test_a_reconnect_redraws_the_unchanged_presentation(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # A board switched off and on comes back blank, and the library's own
-    # reconnect does not redraw it; seen on the Pi after S-02's first rollout.
+    # A board switched off and on comes back blank, and nothing but this loop
+    # redraws it; seen on the Pi after S-02's first rollout.
     board = FakeBoard()
     sleep = ReconnectingSleep(board, sleeps=6, reconnect_at={3})
 
@@ -238,6 +247,52 @@ async def test_a_push_that_failed_is_drawn_again_after_the_next_reconnect() -> N
     await run_until_out_of_sleeps(board, scripted(*[NOTHING] * 5), sleep)
 
     assert board.pushed == [Presentation.IDLE, Presentation.IDLE]
+
+
+class DroppingSleep(FakeSleep):
+    """A `FakeSleep` that drops the link at the `drop_at`-th sleep."""
+
+    def __init__(
+        self, board: FakeBoard, sleeps: int, drop_at: int, failing_reconnects: int
+    ) -> None:
+        super().__init__(sleeps)
+        self.board = board
+        self.drop_at = drop_at
+        self.failing_reconnects = failing_reconnects
+
+    async def __call__(self, seconds: float) -> None:
+        if len(self.durations) + 1 == self.drop_at:
+            self.board.drop(failing_reconnects=self.failing_reconnects)
+        await super().__call__(seconds)
+
+
+async def test_a_dropped_link_is_reconnected_with_a_fresh_backoff_and_redrawn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The cold boot already climbed the backoff to 40 s; the outage after the
+    # drop starts over at 5 s.
+    board = FakeBoard(failing_connects=4)
+    sleep = DroppingSleep(board, sleeps=10, drop_at=6, failing_reconnects=3)
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
+        await run_until_out_of_sleeps(board, scripted(*[NOTHING] * 10), sleep)
+
+    assert sleep.durations == [5.0, 10.0, 20.0, 40.0, 1.0, 1.0, 5.0, 10.0, 20.0, 1.0]
+    assert board.connects == 9
+    assert board.link_state is LinkState.UP
+    assert board.pushed == [Presentation.IDLE, Presentation.IDLE]
+    assert "board link lost; reconnecting" in caplog.text
+    assert "board link came up again; redrawing idle" in caplog.text
+
+
+async def test_a_presentation_that_changed_while_the_link_was_down_is_drawn_on_reconnect() -> None:
+    board = FakeBoard()
+    sleep = DroppingSleep(board, sleeps=3, drop_at=1, failing_reconnects=1)
+
+    await run_until_out_of_sleeps(board, scripted(NOTHING, PLAYING, PLAYING), sleep)
+
+    assert sleep.durations == [1.0, 5.0, 1.0]
+    assert board.pushed == [Presentation.IDLE, Presentation.PLAYING]
 
 
 async def test_playback_starting_and_stopping_pushes_idle_then_placeholder_then_idle(

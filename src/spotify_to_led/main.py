@@ -7,9 +7,10 @@ routes answer whether or not the board is reachable or Spotify is readable. A
 board or Spotify fault is something to report, never something that takes the
 server down with it.
 
-The display task (`display.run_display`) retries the board connect until it
-succeeds, then shows the idle frame or the temporary playing placeholder from
-the reader's snapshot, pushing again whenever that choice changes.
+The display task (`display.run_display`) connects to the board, reconnecting
+with backoff whenever the link is down, and shows the idle frame or the
+temporary playing placeholder from the reader's snapshot, pushing again
+whenever that choice changes or the link comes back.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
