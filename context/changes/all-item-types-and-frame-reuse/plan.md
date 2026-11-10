@@ -385,24 +385,24 @@ reused. Deleting `var/covers/` at any time is safe.
 
 #### Automated
 
-- [x] 2.1 Full suite passes: `uv run pytest`
-- [x] 2.2 Cache and loader tests pass: `uv run pytest tests/test_frame_cache.py tests/test_covers.py tests/test_config.py`
+- [x] 2.1 Full suite passes: `uv run pytest` — b6aa9d0
+- [x] 2.2 Cache and loader tests pass: `uv run pytest tests/test_frame_cache.py tests/test_covers.py tests/test_config.py` — b6aa9d0
 
 #### Manual
 
-- [ ] 2.3 On the laptop with the stub transport, playing a cover writes `var/covers/32/<id>.png`, and restarting the service shows `cover ready from cache` for that cover with no download line
+- [x] 2.3 On the laptop with the stub transport, playing a cover writes `var/covers/32/<id>.png`, and restarting the service shows `cover ready from cache` for that cover with no download line
 
 ### Phase 3: Prove it on the Pi and update the docs
 
 #### Automated
 
-- [ ] 3.1 Full suite passes on the Pi: `uv run pytest`
+- [x] 3.1 Full suite passes on the Pi: `uv run pytest`
 
 #### Manual
 
-- [ ] 3.2 A podcast episode shows its own or its show's artwork on the board
+- [x] 3.2 A podcast episode shows its own or its show's artwork on the board
 - [ ] 3.3 A local file (or an ad) shows the vinyl-disc symbol within about 5 s, and the owner judges it legible and distinct from idle, the placeholder and the stale marker from desk distance
-- [ ] 3.4 Going from album A to album B and back to A shows A's cover from the cache (log `cover ready from cache`) with no download line
-- [ ] 3.5 After `pm2 restart spotify-to-led`, the playing cover comes back from the cache with no download line
+- [x] 3.4 Going from album A to album B and back to A shows A's cover from the cache (log `cover ready from cache`) with no download line
+- [x] 3.5 After `pm2 restart spotify-to-led`, the playing cover comes back from the cache with no download line
 - [ ] 3.6 After a cold boot of the Pi, the playing cover comes back from the cache with no download line
-- [ ] 3.7 `ls var/covers/32/` on the Pi lists one `<id>.png` per cover seen
+- [x] 3.7 `ls var/covers/32/` on the Pi lists one `<id>.png` per cover seen
