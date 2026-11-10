@@ -25,6 +25,7 @@ SETTING_KEYS = (
     "SPOTIFY_CLIENT_ID",
     "SPOTIFY_REDIRECT_URI",
     "SPOTIFY_TOKEN_FILE",
+    "COVER_CACHE_DIR",
     ENV_FILE_VARIABLE,
 )
 
@@ -177,6 +178,18 @@ def test_the_token_file_defaults_to_the_checkout_var_directory(clean_env: None) 
     # Relative on purpose: pm2 runs the service from the checkout, which the
     # daemon user owns, so no extra setup step is needed on the Pi.
     assert Settings(_env_file=None).spotify_token_file == Path("var/spotify-token.json")
+
+
+def test_the_cover_cache_defaults_to_the_checkout_var_directory(clean_env: None) -> None:
+    assert Settings(_env_file=None).cover_cache_dir == Path("var/covers")
+
+
+def test_the_cover_cache_directory_is_read_from_the_environment(
+    clean_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COVER_CACHE_DIR", str(tmp_path / "covers"))
+
+    assert Settings(_env_file=None).cover_cache_dir == tmp_path / "covers"
 
 
 @pytest.mark.parametrize("blank", ["", "   "])

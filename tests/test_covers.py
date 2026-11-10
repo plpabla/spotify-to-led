@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from io import BytesIO
+from pathlib import Path
 
 import httpx2
 import pytest
@@ -23,6 +24,7 @@ from spotify_to_led.covers import (
     CoverStatus,
     select_artwork,
 )
+from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.rendering import render_cover
 from spotify_to_led.spotify.playback import Artwork, PlayingItem
 
@@ -383,4 +385,84 @@ async def test_aclose_cancels_the_download_and_leaves_no_task_running() -> None:
 async def test_aclose_without_any_work_is_harmless() -> None:
     loader = a_loader(ImageServer([]), FakeSleep())
 
+    await loader.aclose()
+
+
+# --- frame cache ----------------------------------------------------------
+
+# A real-shaped scdn URL: the ids above carry a hyphen, so they have no cache key.
+A_CACHEABLE_URL = "https://i.scdn.co/image/ab67616d00004851aaaa"
+
+
+def a_cached_loader(server: ImageServer, cache: FrameCache) -> CoverLoader:
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(server))
+    return CoverLoader(client, SIZE, cache=cache, sleep=FakeSleep())
+
+
+async def test_a_cache_hit_is_ready_at_once_without_a_download(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cache = FrameCache(tmp_path, SIZE)
+    expected = render_cover(Image.open(BytesIO(A_PNG)), SIZE)
+    cache.store(A_CACHEABLE_URL, expected)
+    server = ImageServer([])
+    loader = a_cached_loader(server, cache)
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.covers"):
+        loader.want(A_CACHEABLE_URL)
+
+    # Before any await: the display sees it on the sample that wanted it.
+    state = loader.state(A_CACHEABLE_URL)
+    assert state.status is CoverStatus.READY
+    assert state.frame is not None
+    assert frame_to_pixel_colors(state.frame) == frame_to_pixel_colors(expected)
+    assert [r.getMessage() for r in caplog.records] == [
+        f"cover ready from cache: {A_CACHEABLE_URL}"
+    ]
+    await asyncio.sleep(0)
+    assert server.requests == []
+    await loader.aclose()
+
+
+async def test_a_miss_downloads_once_and_a_restart_finds_it_in_the_cache(
+    tmp_path: Path,
+) -> None:
+    cache = FrameCache(tmp_path, SIZE)
+    server = ImageServer([a_cover()])
+    loader = a_cached_loader(server, cache)
+
+    loader.want(A_CACHEABLE_URL)
+    await until(lambda: loader.state(A_CACHEABLE_URL).status is CoverStatus.READY)
+    await loader.aclose()
+
+    assert server.urls == [A_CACHEABLE_URL]
+    assert (tmp_path / "32" / "ab67616d00004851aaaa.png").is_file()
+
+    # A new loader over the same directory, as after a restart.
+    restarted_server = ImageServer([])
+    restarted = a_cached_loader(restarted_server, FrameCache(tmp_path, SIZE))
+    restarted.want(A_CACHEABLE_URL)
+
+    state = restarted.state(A_CACHEABLE_URL)
+    assert state.status is CoverStatus.READY
+    assert state.frame is not None
+    expected = render_cover(Image.open(BytesIO(A_PNG)), SIZE)
+    assert frame_to_pixel_colors(state.frame) == frame_to_pixel_colors(expected)
+    assert restarted_server.requests == []
+    await restarted.aclose()
+
+
+async def test_a_url_without_a_cache_key_is_downloaded_every_time_it_is_wanted(
+    tmp_path: Path,
+) -> None:
+    server = ImageServer([a_cover(), a_cover()])
+    loader = a_cached_loader(server, FrameCache(tmp_path, SIZE))
+
+    for _ in range(2):
+        loader.want(A_URL)
+        await until(lambda: loader.state(A_URL).status is CoverStatus.READY)
+        loader.want(None)
+
+    assert server.urls == [A_URL, A_URL]
+    assert list(tmp_path.iterdir()) == []
     await loader.aclose()

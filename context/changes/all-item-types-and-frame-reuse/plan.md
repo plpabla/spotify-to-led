@@ -374,19 +374,19 @@ reused. Deleting `var/covers/` at any time is safe.
 
 #### Automated
 
-- [x] 1.1 Full suite passes: `uv run pytest`
-- [x] 1.2 New parse, frames and display tests pass: `uv run pytest tests/test_playback_parse.py tests/test_frames.py tests/test_display.py`
+- [x] 1.1 Full suite passes: `uv run pytest` — 7cf6607
+- [x] 1.2 New parse, frames and display tests pass: `uv run pytest tests/test_playback_parse.py tests/test_frames.py tests/test_display.py` — 7cf6607
 
 #### Manual
 
-- [x] 1.3 The symbol rendered by the stub transport (`var/frames`) at 32 px reads as a disc with a hole, distinct from the idle note and the play triangle
+- [x] 1.3 The symbol rendered by the stub transport (`var/frames`) at 32 px reads as a disc with a hole, distinct from the idle note and the play triangle — 7cf6607
 
 ### Phase 2: Rendered frames persist on disk
 
 #### Automated
 
-- [ ] 2.1 Full suite passes: `uv run pytest`
-- [ ] 2.2 Cache and loader tests pass: `uv run pytest tests/test_frame_cache.py tests/test_covers.py tests/test_config.py`
+- [x] 2.1 Full suite passes: `uv run pytest`
+- [x] 2.2 Cache and loader tests pass: `uv run pytest tests/test_frame_cache.py tests/test_covers.py tests/test_config.py`
 
 #### Manual
 

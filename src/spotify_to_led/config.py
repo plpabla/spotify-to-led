@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     # Mutable runtime state written on every token rotation, kept apart from
     # the env file, which stays read-only configuration.
     spotify_token_file: Path = Path("var/spotify-token.json")
+    # Rendered covers, kept across restarts; one subdirectory per board size.
+    cover_cache_dir: Path = Path("var/covers")
 
     @property
     def spotify_enabled(self) -> bool:

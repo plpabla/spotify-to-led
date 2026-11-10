@@ -117,6 +117,7 @@ def use_transport(
     # there cannot switch Spotify on; `use_spotify` switches it on explicitly.
     monkeypatch.setenv("SPOTIFY_CLIENT_ID", "")
     monkeypatch.setenv("SPOTIFY_TOKEN_FILE", str(tmp_path / "var" / "spotify-token.json"))
+    monkeypatch.setenv("COVER_CACHE_DIR", str(tmp_path / "var" / "covers"))
     monkeypatch.setattr(main, "create_transport", lambda settings: transport)
 
 
