@@ -76,6 +76,46 @@ def test_idle_differs_from_the_placeholder(size: int) -> None:
     assert idle != placeholder
 
 
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_no_artwork_is_a_valid_frame_at_every_supported_size(size: int) -> None:
+    frame = frames.no_artwork(size)
+
+    assert frame.mode == "RGB"
+    assert frame.size == (size, size)
+    validate_frame(frame, size)
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_no_artwork_differs_from_idle_and_the_placeholder(size: int) -> None:
+    symbol = frame_to_pixel_colors(frames.no_artwork(size))
+
+    assert symbol != frame_to_pixel_colors(frames.idle(size))
+    assert symbol != frame_to_pixel_colors(frames.playing_placeholder(size))
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_no_artwork_is_brighter_than_idle_and_not_green(size: int) -> None:
+    # Brighter, so it does not read as nothing playing; neutral, so it does
+    # not read as the placeholder's cover on its way.
+    lit = {pixel for pixel in frame_to_pixel_colors(frames.no_artwork(size)) if pixel != BLACK}
+
+    assert lit == {frames.NO_ARTWORK_COLOUR}
+    assert max(frames.NO_ARTWORK_COLOUR) > frames.IDLE_MAX_CHANNEL
+    assert len(set(frames.NO_ARTWORK_COLOUR)) == 1
+
+
+@pytest.mark.parametrize("size", SUPPORTED_SIZES)
+def test_no_artwork_is_a_centered_disc_with_a_hole(size: int) -> None:
+    frame = frames.no_artwork(size)
+    lit = _lit_pixels(frame)
+    xs = [x for x, _ in lit]
+    ys = [y for _, y in lit]
+
+    assert min(xs) == size - 1 - max(xs), "horizontal margins differ"
+    assert min(ys) == size - 1 - max(ys), "vertical margins differ"
+    assert frame.getpixel((size // 2, size // 2)) == BLACK, "the centre hole is lit"
+
+
 def test_pattern_is_a_32x32_rgb_image() -> None:
     frame = frames.test_pattern(SIZE)
 

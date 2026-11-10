@@ -9,11 +9,13 @@ server down with it.
 
 The display task (`display.run_display`) connects to the board, reconnecting
 with backoff whenever the link is down, and shows the cover of what is playing,
-the playing placeholder while there is no cover to show, or the idle frame,
-from the reader's snapshot. Covers are downloaded by a `CoverLoader` beside
-it, on the Spotify client, and a cover is marked once reads have been failing
-for over 30 s. It pushes again whenever that choice changes or the link comes
-back.
+the playing placeholder while that cover is not on hand, the no-artwork disc
+for an item with no artwork at all, or the idle frame, from the reader's
+snapshot. Covers are downloaded by a `CoverLoader` beside
+it, on the Spotify client, and kept on disk under `COVER_CACHE_DIR`, so a
+cover seen before, even before a restart, is shown without a download. A
+cover is marked once reads have been failing for over 30 s. It pushes again
+whenever that choice changes or the link comes back.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
@@ -38,6 +40,7 @@ from spotify_to_led.board.factory import create_transport
 from spotify_to_led.config import load_settings
 from spotify_to_led.covers import CoverLoader
 from spotify_to_led.display import run_display
+from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
 from spotify_to_led.spotify.reader import AuthorizationStateMismatch, SpotifyReader
@@ -109,7 +112,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         spotify_client = create_spotify_client()
         reader = SpotifyReader(spotify_client, settings, TokenStore(settings.spotify_token_file))
         app.state.spotify_reader = reader
-        covers = CoverLoader(spotify_client, settings.board_size)
+        covers = CoverLoader(
+            spotify_client,
+            settings.board_size,
+            cache=FrameCache(settings.cover_cache_dir, settings.board_size),
+        )
         # `run()` classifies and logs its own failures, so like the display
         # task it cannot take the server down.
         reader_task = asyncio.create_task(reader.run())

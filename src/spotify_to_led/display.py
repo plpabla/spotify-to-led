@@ -1,6 +1,6 @@
 """What the board shows, decided in one place.
 
-This is FR-009's display rule as far as S-04 takes it: the believed playback
+This is FR-009's display rule as far as S-05 takes it: the believed playback
 state and the loader's state of the wanted cover go in, a presentation comes
 out. Keeping the choice pure means the whole table is tested without a board,
 a reader or a download. The rule as it stands:
@@ -12,14 +12,21 @@ a reader or a download. The rule as it stands:
   OQ2, and that case stays S-06's.
 - `PLAYING` and `PAUSED` show the item's cover. A paused item keeps it (an
   owner decision, see `PlaybackStatus`).
-- An item with no artwork to select, or whose cover failed to download, shows
-  the playing placeholder; the loader keeps retrying the download, and the
-  cover replaces the placeholder once it succeeds.
+- An item with no artwork at all, such as an ad or a local file, or no item,
+  shows FR-010's no-artwork symbol at once, with or without a loader. There is
+  no cover to wait for, and the symbol claims nothing a failed read could
+  make untrue, so it is never marked stale.
+- An item whose cover failed to download, or an item with artwork when
+  there is no loader, shows the playing placeholder; the loader keeps retrying the
+  download, and the cover replaces the placeholder once it succeeds.
 - While the wanted cover downloads, the previous presentation stays, so an
   item change goes from one cover straight to the next without a flash in
   between. That includes idle: playback starting from idle keeps idle until
-  the first cover is ready. Only before anything was chosen at all does a
-  pending cover show the placeholder.
+  the first cover is ready. It includes the no-artwork symbol too: after an
+  ad, the disc stays until the next item's cover is ready, briefly saying "no
+  artwork" for an item that has some, which S-05 accepted over a flash of the
+  placeholder. Only before anything was chosen at all does a pending cover
+  show the placeholder.
 - A cover, newly chosen or kept through a changeover, is stale once reads
   have been failing, or no read has succeeded, for more than
   `STALE_AFTER_SECONDS`, and is drawn with FR-018's marker until a read
@@ -101,6 +108,7 @@ class PresentationKind(StrEnum):
 
     IDLE = "idle"
     PLACEHOLDER = "placeholder"
+    NO_ARTWORK = "no_artwork"
     COVER = "cover"
 
 
@@ -124,6 +132,7 @@ class Presentation:
 
 IDLE = Presentation(PresentationKind.IDLE)
 PLACEHOLDER = Presentation(PresentationKind.PLACEHOLDER)
+NO_ARTWORK = Presentation(PresentationKind.NO_ARTWORK)
 
 
 def _utc_now() -> datetime:
@@ -152,6 +161,10 @@ def select_presentation(
     """
     if snapshot is None or snapshot.status not in _SHOWS_AN_ITEM:
         return IDLE
+    # Decided from the item, before the loader: `cover` is also `None` when
+    # there is no loader, and an ad without one must still get the symbol.
+    if snapshot.item is None or not snapshot.item.artwork:
+        return NO_ARTWORK
     if cover is None:
         return PLACEHOLDER
     url, state = cover
@@ -191,7 +204,8 @@ async def run_display(
     """Connect, then keep the board in step with `current()` until cancelled.
 
     `current` returns the believed state, or `None` when there is no reader.
-    `covers` downloads the covers; without one, an item shows the placeholder.
+    `covers` downloads the covers; without one, an item with artwork shows the
+    placeholder.
     Nothing but `CancelledError` leaves this coroutine: the task must not be
     able to prevent the application from serving.
     """
@@ -267,6 +281,8 @@ def _frame_for(
         return frames.idle(size)
     if presentation.kind is PresentationKind.PLACEHOLDER:
         return frames.playing_placeholder(size)
+    if presentation.kind is PresentationKind.NO_ARTWORK:
+        return frames.no_artwork(size)
     if retained is None or retained[0] != presentation.url:
         # Cannot happen while every ready cover is retained as it is chosen;
         # raised rather than drawing some other cover under this one's name.

@@ -21,11 +21,16 @@ for that URL's state:
   stays `FAILED` through each wait, turning `READY` on a later success.
 
 Wanting a different URL, or none, cancels the old work at once. Only the
-wanted cover is held, in memory; a cache across items is S-05's (FR-017).
+wanted cover is held in memory. Across items and restarts, a `FrameCache`
+keeps every rendered cover on disk (FR-017): a newly wanted URL is looked up
+there first, and a hit is `READY` before `want` returns, with no task and no
+download, so the display shows it on the same sample. Every cover rendered
+after a download is stored there.
 
 The log lines say what happened to a cover, and nothing but the URL
-identifies it: INFO when a cover is ready, a WARNING per failed attempt with
-its cause and the wait, with a traceback only on the first failure of a URL.
+identifies it: INFO when a cover is ready, saying so when it came from the
+cache, a WARNING per failed attempt with its cause and the wait, with a
+traceback only on the first failure of a URL.
 The shared client is the Spotify client, but a cover request carries no
 headers of its own, so no token goes to the image CDN or into these lines.
 """
@@ -41,6 +46,7 @@ from io import BytesIO
 import httpx2
 from PIL import Image
 
+from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.rendering import render_cover
 from spotify_to_led.spotify.playback import Artwork, PlayingItem
 
@@ -140,10 +146,12 @@ class CoverLoader:
         client: httpx2.AsyncClient,
         size: int,
         *,
+        cache: FrameCache | None = None,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
         self._client = client
         self._size = size
+        self._cache = cache
         self._sleep = sleep
         self._url: str | None = None
         self._state = PENDING
@@ -161,8 +169,16 @@ class CoverLoader:
         self._cancel()
         self._url = url
         self._state = PENDING
-        if url is not None:
-            self._task = asyncio.create_task(self._load(url))
+        if url is None:
+            return
+        # Read on the event loop: an entry is a few kilobytes, and answering
+        # now is what lets the display show it on this very sample.
+        cached = self._cache.load(url) if self._cache is not None else None
+        if cached is not None:
+            self._state = CoverState(CoverStatus.READY, cached)
+            logger.info("cover ready from cache: %s", url)
+            return
+        self._task = asyncio.create_task(self._load(url))
 
     def state(self, url: str) -> CoverState:
         """The state of `url`: pending unless it is the wanted cover."""
@@ -216,4 +232,8 @@ class CoverLoader:
                     return
                 self._state = CoverState(CoverStatus.READY, frame)
                 logger.info("cover ready: %s", url)
+                if self._cache is not None:
+                    # The unmarked render: the staleness marker is drawn on a
+                    # copy at display time, never into the stored frame.
+                    self._cache.store(url, frame)
                 return

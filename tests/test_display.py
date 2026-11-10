@@ -23,6 +23,7 @@ from spotify_to_led.board.transport import LinkState
 from spotify_to_led.covers import PENDING, CoverState, CoverStatus
 from spotify_to_led.display import (
     IDLE,
+    NO_ARTWORK,
     PLACEHOLDER,
     Presentation,
     PresentationKind,
@@ -44,8 +45,6 @@ NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 A_URL = "https://i.scdn.co/image/cover-a"
 B_URL = "https://i.scdn.co/image/cover-b"
 NOTHING = replace(INITIAL_SNAPSHOT, status=PlaybackStatus.NOTHING_PLAYING)
-# Playing, but with no item, so there is no cover to want.
-PLAYING = replace(INITIAL_SNAPSHOT, status=PlaybackStatus.PLAYING)
 
 COVER_A = Image.new("RGB", (SIZE, SIZE), (200, 40, 90))
 COVER_B = Image.new("RGB", (SIZE, SIZE), (30, 90, 200))
@@ -57,6 +56,7 @@ FAILED = CoverState(CoverStatus.FAILED)
 DRAWN: dict[str, Image.Image] = {
     "idle": frames.idle(SIZE),
     "placeholder": frames.playing_placeholder(SIZE),
+    "no artwork": frames.no_artwork(SIZE),
     "cover a": COVER_A,
     "cover b": COVER_B,
     "stale cover a": frames.with_stale_marker(COVER_A),
@@ -84,6 +84,11 @@ def playing(
         failure=ReadFailure.NETWORK,
         failure_since=NOW - timedelta(seconds=failing_for),
     )
+
+
+# An item with artwork playing; the loop tests that use it run without a
+# loader, so it shows the placeholder.
+PLAYING = playing(A_URL)
 
 
 def cover(url: str, stale: bool = False) -> Presentation:
@@ -236,15 +241,31 @@ def test_nothing_playing_wants_no_cover_even_with_an_item() -> None:
     assert wanted_cover_url(snapshot, SIZE) is None
 
 
+@pytest.mark.parametrize("previous", [cover(A_URL), PLACEHOLDER, IDLE, NO_ARTWORK, None])
 @pytest.mark.parametrize("status", [PlaybackStatus.PLAYING, PlaybackStatus.PAUSED])
-def test_an_item_without_artwork_wants_no_cover_and_selects_the_placeholder(
-    status: PlaybackStatus,
+def test_an_item_without_artwork_wants_no_cover_and_selects_the_symbol(
+    status: PlaybackStatus, previous: Presentation | None
 ) -> None:
+    # No cover is coming, so there is no changeover to keep the previous one for.
     snapshot = playing(None, status=status)
+    no_item = replace(snapshot, item=None)
 
     assert wanted_cover_url(snapshot, SIZE) is None
-    assert wanted_cover_url(replace(snapshot, item=None), SIZE) is None
-    assert select_presentation(snapshot, None, cover(A_URL), NOW) == PLACEHOLDER
+    assert wanted_cover_url(no_item, SIZE) is None
+    assert select_presentation(snapshot, None, previous, NOW) == NO_ARTWORK
+    assert select_presentation(no_item, None, previous, NOW) == NO_ARTWORK
+
+
+def test_an_ad_selects_the_symbol_rather_than_the_placeholder() -> None:
+    # `cover` is `None` both here and without a loader; the item tells them apart.
+    ad = PlayingItem(kind="ad", id=None, name=None, subtitle=None, artwork=())
+    snapshot = replace(playing(None), item=ad)
+
+    assert select_presentation(snapshot, None, None, NOW) == NO_ARTWORK
+
+
+def test_without_a_loader_an_item_with_artwork_selects_the_placeholder() -> None:
+    assert select_presentation(playing(A_URL), None, None, NOW) == PLACEHOLDER
 
 
 @pytest.mark.parametrize("status", [PlaybackStatus.PLAYING, PlaybackStatus.PAUSED])
@@ -320,9 +341,18 @@ def test_the_placeholder_is_never_marked() -> None:
     assert select_presentation(failing, (A_URL, PENDING), PLACEHOLDER, NOW) == PLACEHOLDER
 
 
+def test_the_symbol_is_never_marked() -> None:
+    failing = playing(None, failing_for=600)
+    stopped = replace(playing(None), last_read_at=NOW - timedelta(seconds=600))
+
+    assert select_presentation(failing, None, cover(A_URL, stale=True), NOW) == NO_ARTWORK
+    assert select_presentation(stopped, None, None, NOW) == NO_ARTWORK
+
+
 def test_presentations_read_plainly_in_the_log() -> None:
     assert str(IDLE) == "idle"
     assert str(PLACEHOLDER) == "placeholder"
+    assert str(NO_ARTWORK) == "no_artwork"
     assert str(cover(A_URL)) == f"cover {A_URL}"
     assert str(cover(A_URL, stale=True)) == f"cover {A_URL} (stale)"
 
@@ -672,6 +702,25 @@ async def test_pausing_keeps_the_cover_and_stopping_returns_to_idle() -> None:
     assert board.drawn == ["cover a", "idle"]
     # Nothing on show wants nothing, which lets the loader drop the cover.
     assert covers.wanted == [A_URL, A_URL, None]
+
+
+async def test_an_item_without_artwork_shows_the_symbol_at_once_after_a_cover() -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A})
+    current = scripted(playing(A_URL), playing(None), playing(None))
+
+    await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=3), covers)
+
+    assert board.drawn == ["cover a", "no artwork"]
+    assert covers.wanted == [A_URL, None, None]
+
+
+async def test_without_a_loader_an_item_without_artwork_shows_the_symbol() -> None:
+    board = FakeBoard()
+
+    await run_until_out_of_sleeps(board, scripted(playing(None)), FakeSleep(sleeps=1))
+
+    assert board.drawn == ["no artwork"]
 
 
 async def test_without_a_loader_an_item_with_artwork_shows_the_placeholder() -> None:
