@@ -1,5 +1,7 @@
 """The code-drawn frames and the pure image-to-wire conversion."""
 
+from collections.abc import Callable
+
 import pytest
 from PIL import Image
 
@@ -231,6 +233,16 @@ def test_stale_marker_leaves_the_rest_of_the_frame_unchanged(size: int) -> None:
     }
 
     assert changed == block | ring
+
+
+@pytest.mark.parametrize("glyph", [frames.idle, frames.playing_placeholder, frames.no_artwork])
+@pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
+def test_stale_marker_clears_every_glyph(size: int, glyph: Callable[[int], Image.Image]) -> None:
+    # Idle, the placeholder and the disc are marked too, and the marker must
+    # not cut into them.
+    block, ring = _marker_regions(size)
+
+    assert not set(_lit_pixels(glyph(size))) & (block | ring)
 
 
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)

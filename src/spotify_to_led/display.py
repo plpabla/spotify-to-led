@@ -1,21 +1,18 @@
 """What the board shows, decided in one place.
 
-This is FR-009's display rule as far as S-05 takes it: the believed playback
+This is FR-009's display rule, completed by S-06: the believed playback
 state and the loader's state of the wanted cover go in, a presentation comes
 out. Keeping the choice pure means the whole table is tested without a board,
-a reader or a download. The rule as it stands:
+a reader or a download. The rule:
 
-- No reader (`None`, when Spotify is not configured), `UNKNOWN` or
-  `NOTHING_PLAYING` show idle, whether or not reads are failing. Idle claims
-  nothing about what is playing, so there is nothing on it to mark stale.
-  What the board should show when it is blind and has no cover to mark is
-  OQ2, and that case stays S-06's.
+- No reader (`None`, when Spotify is not configured) shows plain idle, never
+  stale: that is a setup mode, not a service that has lost sight of Spotify.
+- `UNKNOWN` and `NOTHING_PLAYING` show idle.
 - `PLAYING` and `PAUSED` show the item's cover. A paused item keeps it (an
   owner decision, see `PlaybackStatus`).
 - An item with no artwork at all, such as an ad or a local file, or no item,
   shows FR-010's no-artwork symbol at once, with or without a loader. There is
-  no cover to wait for, and the symbol claims nothing a failed read could
-  make untrue, so it is never marked stale.
+  no cover to wait for.
 - An item whose cover failed to download, or an item with artwork when
   there is no loader, shows the playing placeholder; the loader keeps retrying the
   download, and the cover replaces the placeholder once it succeeds.
@@ -27,10 +24,12 @@ a reader or a download. The rule as it stands:
   artwork" for an item that has some, which S-05 accepted over a flash of the
   placeholder. Only before anything was chosen at all does a pending cover
   show the placeholder.
-- A cover, newly chosen or kept through a changeover, is stale once reads
-  have been failing, or no read has succeeded, for more than
-  `STALE_AFTER_SECONDS`, and is drawn with FR-018's marker until a read
-  succeeds again.
+- Whatever a reader's snapshot chose, cover, idle, placeholder or symbol,
+  newly chosen or kept through a changeover, is stale once reads have been
+  failing, or no read has succeeded, for more than `STALE_AFTER_SECONDS`,
+  and is drawn with FR-018's marker until a read succeeds again. Idle after
+  "nothing playing" and the disc after an ad are claims a blind service can
+  no longer vouch for either (OQ2).
 
 `run_display` is the task that owns the board for the process lifetime. Every
 connect is retried here, forever with a doubling backoff: the first one, so a
@@ -88,7 +87,7 @@ CONNECT_RETRY_MAX_SECONDS = 60.0
 # The reader polls every 3 s, so sampling every second puts a change on the
 # board within about 4 s of Spotify reporting it.
 SAMPLE_INTERVAL_SECONDS = 1.0
-# FR-018's grace: a blip of failed reads leaves the cover unmarked, a cover
+# FR-018's grace: a blip of failed reads leaves the board unmarked, whatever
 # the service has not been able to vouch for in longer than this is marked.
 STALE_AFTER_SECONDS = 30
 # A failed push is retried while its presentation stays wanted: the next
@@ -125,9 +124,8 @@ class Presentation:
     stale: bool = False
 
     def __str__(self) -> str:
-        if self.kind is not PresentationKind.COVER:
-            return str(self.kind)
-        return f"cover {self.url} (stale)" if self.stale else f"cover {self.url}"
+        name = f"cover {self.url}" if self.kind is PresentationKind.COVER else str(self.kind)
+        return f"{name} (stale)" if self.stale else name
 
 
 IDLE = Presentation(PresentationKind.IDLE)
@@ -159,27 +157,27 @@ def select_presentation(
     there is no cover to want (or no loader to want it from). `previous` is
     the presentation last chosen, `None` before the first.
     """
-    if snapshot is None or snapshot.status not in _SHOWS_AN_ITEM:
+    if snapshot is None:
+        # Spotify is not configured: a setup mode, not blindness, so plain idle.
         return IDLE
+    if snapshot.status not in _SHOWS_AN_ITEM:
+        chosen = IDLE
     # Decided from the item, before the loader: `cover` is also `None` when
     # there is no loader, and an ad without one must still get the symbol.
-    if snapshot.item is None or not snapshot.item.artwork:
-        return NO_ARTWORK
-    if cover is None:
-        return PLACEHOLDER
-    url, state = cover
-    if state.status is CoverStatus.READY:
-        chosen = Presentation(PresentationKind.COVER, url)
-    elif state.status is CoverStatus.PENDING:
+    elif snapshot.item is None or not snapshot.item.artwork:
+        chosen = NO_ARTWORK
+    elif cover is None:
+        chosen = PLACEHOLDER
+    elif cover[1].status is CoverStatus.READY:
+        chosen = Presentation(PresentationKind.COVER, cover[0])
+    elif cover[1].status is CoverStatus.PENDING:
         # The changeover: whatever was chosen last, idle included, stays until
         # the new cover is ready, rather than flashing the placeholder.
         chosen = previous if previous is not None else PLACEHOLDER
     else:
-        return PLACEHOLDER
-    if chosen.kind is not PresentationKind.COVER:
-        return chosen
-    # Recomputed for a kept cover too: staleness is about the reads now, not
-    # about when the cover was chosen.
+        chosen = PLACEHOLDER
+    # Whatever the kind, and recomputed for a kept presentation too: staleness
+    # is about the reads now, not about when the presentation was chosen.
     return replace(chosen, stale=_is_stale(snapshot, now))
 
 
@@ -276,18 +274,19 @@ async def run_display(
 def _frame_for(
     presentation: Presentation, size: int, retained: tuple[str, Image.Image] | None
 ) -> Image.Image:
-    """Return the RGB `(size, size)` frame that draws `presentation`."""
+    """Return the RGB `(size, size)` frame that draws `presentation`, marked if stale."""
     if presentation.kind is PresentationKind.IDLE:
-        return frames.idle(size)
-    if presentation.kind is PresentationKind.PLACEHOLDER:
-        return frames.playing_placeholder(size)
-    if presentation.kind is PresentationKind.NO_ARTWORK:
-        return frames.no_artwork(size)
-    if retained is None or retained[0] != presentation.url:
+        frame = frames.idle(size)
+    elif presentation.kind is PresentationKind.PLACEHOLDER:
+        frame = frames.playing_placeholder(size)
+    elif presentation.kind is PresentationKind.NO_ARTWORK:
+        frame = frames.no_artwork(size)
+    elif retained is None or retained[0] != presentation.url:
         # Cannot happen while every ready cover is retained as it is chosen;
         # raised rather than drawing some other cover under this one's name.
         raise RuntimeError(f"no frame retained for {presentation}")
-    frame = retained[1]
+    else:
+        frame = retained[1]
     return frames.with_stale_marker(frame) if presentation.stale else frame
 
 

@@ -17,8 +17,10 @@ Four frames, and one overlay, live here:
 - `test_pattern` is the hardware orientation diagnostic. The service no longer
   shows it; it stays for checking a board's wiring and colour order.
 - `with_stale_marker` is FR-018's staleness marker, drawn over a frame the
-  service can no longer vouch for: a small amber block in the top-right
-  corner, inside a black ring so it reads against any cover, dark or bright.
+  service can no longer vouch for, a cover or idle, the placeholder or the
+  disc: a small amber block in the top-right corner, inside a black ring so
+  it reads against any cover, dark or bright. At every supported size it
+  clears the note, the triangle and the disc, so it never cuts into a glyph.
 
 The test pattern has four solid quadrants in colours that stay apart on a
 32x32 LED matrix, so a transposed, mirrored or BGR-ordered push looks wrong
@@ -153,7 +155,7 @@ def with_stale_marker(frame: Image.Image) -> Image.Image:
     """Return a copy of `frame` with the stale marker in its top-right corner.
 
     The ring is black on every side, including the two along the panel edge,
-    so the marker keeps the same shape whatever the cover has at the border.
+    so the marker keeps the same shape whatever the frame has at the border.
     `frame` itself is left untouched.
     """
     scale = frame.width // _GRID
