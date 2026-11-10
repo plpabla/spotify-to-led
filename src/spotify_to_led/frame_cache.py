@@ -75,7 +75,9 @@ class FrameCache:
                 return image.convert("RGB")
         except FileNotFoundError:
             return None
-        except (OSError, ValueError, SyntaxError) as error:
+        # DecompressionBombError is no OSError: a header claiming a huge
+        # image raises it from `open`, and it must be a miss like the rest.
+        except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as error:
             logger.warning(
                 "ignoring unreadable cached cover %s (%s: %s)",
                 path,
@@ -93,6 +95,10 @@ class FrameCache:
         temp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            # A power cut between writing a temp file and replacing the entry
+            # leaves one behind, and nothing else would ever remove it.
+            for leftover in path.parent.glob(f".{path.name}.*.tmp"):
+                leftover.unlink(missing_ok=True)
             try:
                 frame.save(temp, format="PNG")
                 os.replace(temp, path)

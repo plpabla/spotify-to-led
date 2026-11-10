@@ -16,14 +16,17 @@ a reader or a download. The rule as it stands:
   shows FR-010's no-artwork symbol at once, with or without a loader. There is
   no cover to wait for, and the symbol claims nothing a failed read could
   make untrue, so it is never marked stale.
-- An item whose cover failed to download, or any item when there is no
-  loader, shows the playing placeholder; the loader keeps retrying the
+- An item whose cover failed to download, or an item with artwork when
+  there is no loader, shows the playing placeholder; the loader keeps retrying the
   download, and the cover replaces the placeholder once it succeeds.
 - While the wanted cover downloads, the previous presentation stays, so an
   item change goes from one cover straight to the next without a flash in
   between. That includes idle: playback starting from idle keeps idle until
-  the first cover is ready. Only before anything was chosen at all does a
-  pending cover show the placeholder.
+  the first cover is ready. It includes the no-artwork symbol too: after an
+  ad, the disc stays until the next item's cover is ready, briefly saying "no
+  artwork" for an item that has some, which S-05 accepted over a flash of the
+  placeholder. Only before anything was chosen at all does a pending cover
+  show the placeholder.
 - A cover, newly chosen or kept through a changeover, is stale once reads
   have been failing, or no read has succeeded, for more than
   `STALE_AFTER_SECONDS`, and is drawn with FR-018's marker until a read

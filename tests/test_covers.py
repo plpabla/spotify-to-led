@@ -9,6 +9,8 @@ state observable. No real time passes and no network is used.
 
 import asyncio
 import logging
+import struct
+import zlib
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 from pathlib import Path
@@ -450,6 +452,43 @@ async def test_a_miss_downloads_once_and_a_restart_finds_it_in_the_cache(
     assert frame_to_pixel_colors(state.frame) == frame_to_pixel_colors(expected)
     assert restarted_server.requests == []
     await restarted.aclose()
+
+
+def a_bomb_header() -> bytes:
+    """A PNG that is only a header claiming 20000x20000 pixels, over Pillow's bomb limit."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data))
+        )
+
+    header = struct.pack(">IIBBBBB", 20000, 20000, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IEND", b"")
+
+
+@pytest.mark.parametrize(
+    "bad_entry", [b"\x89PNG not really", a_bomb_header()], ids=["garbage", "bomb header"]
+)
+async def test_a_bad_cache_entry_is_downloaded_again_and_rewritten(
+    tmp_path: Path, bad_entry: bytes
+) -> None:
+    entry = tmp_path / "32" / "ab67616d00004851aaaa.png"
+    entry.parent.mkdir()
+    entry.write_bytes(bad_entry)
+    server = ImageServer([a_cover()])
+    loader = a_cached_loader(server, FrameCache(tmp_path, SIZE))
+
+    loader.want(A_CACHEABLE_URL)
+    await until(lambda: loader.state(A_CACHEABLE_URL).status is CoverStatus.READY)
+    await loader.aclose()
+
+    assert server.urls == [A_CACHEABLE_URL]
+    rewritten = FrameCache(tmp_path, SIZE).load(A_CACHEABLE_URL)
+    assert rewritten is not None
+    expected = render_cover(Image.open(BytesIO(A_PNG)), SIZE)
+    assert frame_to_pixel_colors(rewritten) == frame_to_pixel_colors(expected)
 
 
 async def test_a_url_without_a_cache_key_is_downloaded_every_time_it_is_wanted(

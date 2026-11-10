@@ -9,8 +9,9 @@ server down with it.
 
 The display task (`display.run_display`) connects to the board, reconnecting
 with backoff whenever the link is down, and shows the cover of what is playing,
-the playing placeholder while there is no cover to show, or the idle frame,
-from the reader's snapshot. Covers are downloaded by a `CoverLoader` beside
+the playing placeholder while that cover is not on hand, the no-artwork disc
+for an item with no artwork at all, or the idle frame, from the reader's
+snapshot. Covers are downloaded by a `CoverLoader` beside
 it, on the Spotify client, and kept on disk under `COVER_CACHE_DIR`, so a
 cover seen before, even before a restart, is shown without a download. A
 cover is marked once reads have been failing for over 30 s. It pushes again

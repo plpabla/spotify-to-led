@@ -1,7 +1,7 @@
 ---
 change_id: all-item-types-and-frame-reuse
 title: Artwork for every item type and reuse of rendered frames across reboots
-status: implemented
+status: impl_reviewed
 created: 2026-11-09
 updated: 2026-11-10
 archived_at: null
