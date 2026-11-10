@@ -10,6 +10,10 @@ Parsing is defensive on purpose. Spotify documents `item` and most of its
 fields as nullable, leaves the ad and private-session bodies undocumented, and
 guarantees no image sizes, so a missing or odd field yields an absent value
 rather than an exception.
+
+An episode's artwork is its own images, and its show's when it has none of
+its own: many episodes carry only the show's art, and the generic no-artwork
+symbol is for items with no artwork at all (FR-010).
 """
 
 from dataclasses import dataclass
@@ -118,6 +122,9 @@ def parse_currently_playing(
         show = item.get("show")
         subtitle = _string(show.get("name")) if isinstance(show, dict) else None
         images = item.get("images")
+        if not _artwork(images) and isinstance(show, dict):
+            # Only as a fallback: an episode's own art is the more specific.
+            images = show.get("images")
     else:
         subtitle = None
         images = item.get("images")

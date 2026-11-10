@@ -1,15 +1,19 @@
 """The frames the service draws in code, without artwork.
 
-Three frames, and one overlay, live here:
+Four frames, and one overlay, live here:
 
 - `idle` is what the board shows when nothing is playing (FR-011): a small,
   dim music note centered on black. It is on for many hours a day, so it stays
   calm and dark, yet a lit glyph still says the service is running rather than
   dead.
 - `playing_placeholder` stands in for the cover while something is playing
-  and its cover is not on hand: not downloaded yet, failed to download, or
-  not offered at all. A bright play triangle, unmistakable next to idle at a
-  glance. S-05's generic no-artwork symbol (FR-010) replaces it.
+  and its artwork exists but is not on hand: not downloaded yet, or failed to
+  download. A bright play triangle, unmistakable next to idle at a glance.
+- `no_artwork` is FR-010's generic symbol, for an item that has no artwork at
+  all, such as an ad or a local file: a vinyl disc with a centre hole, in a
+  neutral grey. Round where the triangle is pointed and the note is narrow,
+  brighter than idle so it does not read as "nothing playing", and not green
+  so it does not read as "cover on its way".
 - `test_pattern` is the hardware orientation diagnostic. The service no longer
   shows it; it stays for checking a board's wiring and colour order.
 - `with_stale_marker` is FR-018's staleness marker, drawn over a frame the
@@ -49,6 +53,10 @@ IDLE_COLOUR: tuple[int, int, int] = (
     IDLE_MAX_CHANNEL // 2,
 )
 PLAYING_COLOUR: tuple[int, int, int] = (0, 255, 0)
+# A neutral grey: well above the idle ceiling, so the disc says something is
+# playing, yet short of full white, so it does not glare like a cover's
+# highlights. A starting value, to be judged on the real board (OQ4).
+NO_ARTWORK_COLOUR: tuple[int, int, int] = (160, 160, 160)
 
 # The stale marker: a 2x2-cell amber block on the 16x16 design grid, with a
 # black ring around it. The ring is in board pixels, not cells, and does not
@@ -73,6 +81,22 @@ _NOTE = (
     "##..",
     "##..",
 )
+# The vinyl disc, on the same grid and by the same rules as the note: 12 cells
+# across, so a 2-cell margin on every side, with a 2x2 hole in the middle.
+_DISC = (
+    "....####....",
+    "..########..",
+    ".##########.",
+    ".##########.",
+    "############",
+    "#####..#####",
+    "#####..#####",
+    "############",
+    ".##########.",
+    ".##########.",
+    "..########..",
+    "....####....",
+)
 
 
 def test_pattern(size: int) -> Image.Image:
@@ -88,23 +112,33 @@ def test_pattern(size: int) -> Image.Image:
 
 def idle(size: int) -> Image.Image:
     """Return the idle frame: a dim eighth note centered on black."""
+    return _glyph(_NOTE, IDLE_COLOUR, size)
+
+
+def no_artwork(size: int) -> Image.Image:
+    """Return the no-artwork symbol: a grey vinyl disc with a hole, centered on black."""
+    return _glyph(_DISC, NO_ARTWORK_COLOUR, size)
+
+
+def _glyph(cells: tuple[str, ...], colour: tuple[int, int, int], size: int) -> Image.Image:
+    """Draw a 16x16-grid design, `#` lit, centered and scaled by whole pixels."""
     scale = size // _GRID
-    left = (_GRID - len(_NOTE[0])) // 2
-    top = (_GRID - len(_NOTE)) // 2
+    left = (_GRID - len(cells[0])) // 2
+    top = (_GRID - len(cells)) // 2
     frame = Image.new("RGB", (size, size))
-    for row, line in enumerate(_NOTE):
+    for row, line in enumerate(cells):
         for column, cell in enumerate(line):
             if cell == "#":
                 x = (left + column) * scale
                 y = (top + row) * scale
-                frame.paste(IDLE_COLOUR, (x, y, x + scale, y + scale))
+                frame.paste(colour, (x, y, x + scale, y + scale))
     return frame
 
 
 def playing_placeholder(size: int) -> Image.Image:
     """Return a bright right-pointing play triangle about half the panel wide.
 
-    The stand-in for a cover the service does not have, until S-05's symbol.
+    The stand-in for a cover that exists but the service does not have yet.
     """
     low = size // 4
     high = size - size // 4 - 1

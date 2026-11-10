@@ -101,6 +101,28 @@ def test_a_playing_episode_takes_its_artwork_from_the_item_not_the_show() -> Non
     )
 
 
+def test_an_episode_without_images_of_its_own_takes_its_shows() -> None:
+    # Many episodes carry only the show's art; that is artwork, not none.
+    body = an_episode_body()
+    body["item"]["images"] = []  # type: ignore[index]
+
+    _, item = parse_currently_playing(200, body)
+
+    assert item is not None
+    assert item.artwork == (Artwork("https://i.scdn.co/image/show", None, None),)
+
+
+def test_an_episode_with_no_images_and_no_show_images_has_no_artwork() -> None:
+    body = an_episode_body()
+    body["item"]["images"] = []  # type: ignore[index]
+    body["item"]["show"]["images"] = []  # type: ignore[index]
+
+    _, item = parse_currently_playing(200, body)
+
+    assert item is not None and item.artwork == ()
+    assert item.subtitle == "A Show"
+
+
 def test_an_ad_with_no_item_is_an_ad_with_nothing_to_show() -> None:
     body = {"is_playing": True, "currently_playing_type": "ad", "item": None}
 
@@ -133,6 +155,8 @@ def test_missing_images_mean_no_artwork_rather_than_an_error() -> None:
     del track["item"]["album"]["images"]  # type: ignore[index]
     episode = an_episode_body()
     del episode["item"]["images"]  # type: ignore[index]
+    # Otherwise the episode falls back to its show's images.
+    del episode["item"]["show"]["images"]  # type: ignore[index]
 
     _, track_item = parse_currently_playing(200, track)
     _, episode_item = parse_currently_playing(200, episode)
