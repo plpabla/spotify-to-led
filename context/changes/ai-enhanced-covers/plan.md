@@ -460,9 +460,9 @@ the previous commit. Leftover `.ai.png` files are harmless.
 
 #### Manual
 
-- [ ] 1.4 On the Pi with the service stopped, the owner judges 6–10 varied covers plain vs enhanced from desk distance and records the verdict and the downscale choice
-- [ ] 1.5 Generation wall time and cost per call are recorded for at least 5 calls from the Pi
-- [ ] 1.6 PRD (FR-019, Non-Goal, NFR-01 note), `CLAUDE.md`, roadmap (M-1 closed, M-2 open), `tech-stack.md` and `infrastructure.md` are revised, or the change is stopped with the negative verdict recorded
+- [x] 1.4 On the Pi with the service stopped, the owner judges 6–10 varied covers plain vs enhanced from desk distance and records the verdict and the downscale choice
+- [x] 1.5 Generation wall time and cost per call are recorded for at least 5 calls from the Pi
+- [x] 1.6 PRD (FR-019, Non-Goal, NFR-01 note), `CLAUDE.md`, roadmap (M-1 closed, M-2 open), `tech-stack.md` and `infrastructure.md` are revised, or the change is stopped with the negative verdict recorded
 
 ### Phase 2: Saved toggle and settings
 

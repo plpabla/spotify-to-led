@@ -9,7 +9,7 @@ From @context/foundation/prd.md. A diff that breaks one of these is wrong even i
 - **Read-only against Spotify.** No play, pause, skip or volume, and no write scopes in the OAuth request.
 - **Never present a cover the service cannot vouch for** without a visible staleness marker (FR-018). Stale is allowed; stale-and-unlabelled is the regression.
 - **No auth in the application.** No roles, no sign-up, no login, no gated routes in service code. The only gate is a Cloudflare Access policy at the edge.
-- **Spotify is the only source**, and v1 draws one static frame per item: no animation, no AI-enhanced covers.
+- **Spotify is the only source**, and the board draws one static frame per item: no animation. AI-enhanced covers exist only as FR-019, off unless the owner switches them on, and with the switch off no request goes to OpenRouter.
 
 ## Project structure
 

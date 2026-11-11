@@ -4,11 +4,11 @@ version: 1
 status: draft
 created: 2026-11-03
 updated: 2026-11-11
-prd_version: 1
+prd_version: 2
 main_goal: quality
 top_blocker: decisions
-milestone_id: unattended-truthful-board
-milestone_seq: 1
+milestone_id: ai-enhanced-covers
+milestone_seq: 2
 milestone_status: open
 ---
 
@@ -25,7 +25,18 @@ milestone_status: open
 
 ## Milestone
 
-**M-1: Unattended truthful board** -- Status: open
+**M-2: AI-enhanced covers** -- Status: open
+
+- **Intent:** The owner can switch the board from the plain downscale to covers redrawn for the
+  32x32 panel by an image model, without giving up anything M-1 proved: the board still runs
+  unattended, and still never presents a cover it cannot vouch for without marking it.
+- **Source materials:** `context/foundation/prd.md` (v2, FR-019) and
+  `context/changes/ai-enhanced-covers/` (frame, plan, verification).
+- **Done when:** `S-08` is `done`.
+- **Scope anchors:** FR-019, with FR-017 (cache) and FR-018 (marker) applying to enhanced frames,
+  and NFR-01 as noted for FR-019.
+
+**M-1: Unattended truthful board** -- Status: closed 2026-11-11 (see Milestone History)
 
 - **Intent:** The board, running unattended on the Raspberry Pi, shows the correct presentation
   for the Spotify account across every case the display rule covers, and never presents a cover
@@ -442,21 +453,29 @@ Foundations below assume these are present and do NOT re-scaffold them.
   made for the 32x32 panel, rather than a downscale of the original, and see it replace the
   plain rendering when the item changes.
 - **Change ID:** `ai-enhanced-covers`
-- **PRD refs:** none in v1. AI-enhanced covers are a PRD v1 Non-Goal, recorded as intended
-  afterwards (`shape-notes.md` `## Forward: technical-roadmap`). Planning this slice needs a PRD
-  revision that turns it into a requirement first.
+- **PRD refs:** FR-019 (PRD v2, 2026-11-11). Until then AI-enhanced covers were a PRD v1
+  Non-Goal, recorded as intended afterwards (`shape-notes.md` `## Forward: technical-roadmap`).
 - **Prerequisites:** S-04 (the `render_cover` seam it replaces), S-05 (the frame cache, which is
   what makes an expensive render acceptable on every repeat).
 - **Parallel with:** --
-- **Blockers:** M-1 must close first; the hard rules forbid AI-enhanced covers in v1.
+- **Blockers:** -- (M-1 closed and the hard rule revised, 2026-11-11).
 - **Unknowns:**
-  - Where the model runs, and at what cost: on the Pi, or a hosted image API? Owner. Block: yes
-    for planning. The cover leaves the device in the hosted case. Covers are public, so the
+  - ~~Where the model runs, and at what cost~~ -- RESOLVED 2026-11-11: hosted, through
+    OpenRouter, `black-forest-labs/flux-3-image-klein`, about 9 s and $0.009 per cover measured
+    from the Pi. The original framing, kept for the record: on the Pi, or a hosted image API?
+    Owner. Block: yes for planning. The cover leaves the device in the hosted case. Covers are public, so the
     Spotify refresh credential is the only thing that must never leave the Pi, and it would not.
-  - How it fits NFR-01's 5 s budget: a generation call is likely slower. One option is to show
-    the plain rendering first and swap in the enhanced frame when it is ready. Owner. Block: no.
-  - What "better" means at 32x32, and its falsifiable bar. Same resolution path as FR-007: judge
-    real covers on the real board against the S-04 plain downscale. Owner. Block: no.
+  - ~~How it fits NFR-01's 5 s budget~~ -- RESOLVED 2026-11-11: the playing placeholder is
+    the new item's state while a never-seen cover generates, then the enhanced frame; a failure
+    falls back to the plain cover (FR-019, NFR-01 note). The original framing: a generation call
+    is likely slower. One option is to show the plain rendering first and swap in the enhanced
+    frame when it is ready. Owner. Block: no.
+  - ~~What "better" means at 32x32~~ -- RESOLVED 2026-11-11 by a board bake-off: every
+    enhanced cover read better than its plain downscale, and a LANCZOS downscale of the model's
+    answer beat BOX; FR-019 carries the bar. See
+    `context/changes/ai-enhanced-covers/verification.md`. The original framing: same resolution
+    path as FR-007: judge real covers on the real board against the S-04 plain downscale. Owner.
+    Block: no.
   - The staleness rule has to cover an enhanced frame too: FR-018's marker applies to any cover
     presentation, however it was rendered.
 - **Risk:** Recorded 2026-11-09 from the S-04 bake-off: the owner kept the plain area downscale
@@ -481,7 +500,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 | S-05       | `all-item-types-and-frame-reuse`            | Cover every item type and reuse rendered frames across reboots                    | no                    | Needs S-04                                                                  |
 | S-06       | `staleness-marker-and-display-rule`         | Add the staleness marker and complete the display-state rule                      | no                    | Needs S-04                                                                  |
 | S-07       | `status-and-reauthorization-page`           | Serve the status page and the Spotify re-authorization action                     | no                    | Needs S-01, F-03, S-06                                                      |
-| S-08       | `ai-enhanced-covers`                        | Regenerate the playing cover with an AI step for the 32x32 panel                  | no                    | Post-v1 (M-2). Needs M-1 closed, S-04, S-05, and a PRD revision             |
+| S-08       | `ai-enhanced-covers`                        | Regenerate the playing cover with an AI step for the 32x32 panel                  | yes                   | M-2. Planned and in progress: `context/changes/ai-enhanced-covers/`          |
 
 ## Open Roadmap Questions
 
@@ -551,8 +570,12 @@ not ruled out for later.
 
 ## Milestone History
 
-(Empty -- M-1 is the first milestone. Append-only; closure entries are written when a milestone
-closes.)
+(Append-only; closure entries are written when a milestone closes.)
+
+- **M-1: Unattended truthful board** -- closed 2026-11-11. F-01 to F-03 and S-01 to S-07 are
+  all `done` (archived 2026-11-04 to 2026-11-11, see `## Done`); S-08 was carried into M-2 as
+  planned. Closed so that S-08 could start: PRD v2 turned AI-enhanced covers into FR-019 the
+  same day.
 
 ## Done
 
