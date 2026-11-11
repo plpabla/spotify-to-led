@@ -76,7 +76,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | done |
 | S-04 | `artwork-on-the-board`                      | see the artwork of whatever is playing, and see it change when the item changes                             | S-02             | US-01, FR-006, FR-007, FR-008, FR-016, NFR-01   | done |
 | S-05 | `all-item-types-and-frame-reuse`            | see artwork for any item type including podcasts, with repeated artwork never re-rendered                   | S-04             | US-01, FR-010, FR-017                           | done |
-| S-06 | `staleness-marker-and-display-rule`         | tell at a glance that the board can no longer vouch for the cover it is showing                             | S-04             | US-02, US-04, FR-004, FR-009, FR-018            | in-progress |
+| S-06 | `staleness-marker-and-display-rule`         | tell at a glance that the board can no longer vouch for what it is showing                                  | S-04             | US-02, US-04, FR-004, FR-009, FR-018            | in-progress |
 | S-07 | `status-and-reauthorization-page`           | open one page, read what the service believes and whether the board link is alive, and re-authorize Spotify | S-01, F-03, S-06 | US-02, US-06, FR-004, FR-005, FR-015            | proposed |
 | S-08 | `ai-enhanced-covers`                        | see an AI-enhanced version of the playing cover, made for the 32x32 panel rather than shrunk to it          | S-04, S-05       | -- (PRD v1 non-goal; post-v1, M-2)              | deferred |
 
@@ -370,7 +370,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 
 ### S-06: The staleness marker completes the display rule
 
-- **Outcome:** Owner can tell at a glance that the board can no longer vouch for the cover it is
+- **Outcome:** Owner can tell at a glance that the board can no longer vouch for what it is
   showing, because after a 30-second grace period a persistent corner marker appears on it -- for
   any cause, whether network failure, API errors or rate limiting, or refused authorization.
 - **Change ID:** `staleness-marker-and-display-rule`
@@ -390,8 +390,8 @@ Foundations below assume these are present and do NOT re-scaffold them.
     FR-009's rule is what this slice delivers.
   - ~~Can a few corner pixels actually carry the signal at 32x32 from across a room?~~ --
     RESOLVED 2026-11-11: yes. During two real outages on the Pi the owner read the marker from
-    across the room over a cover and over idle, in a lit room and a dark one. The original
-    framing, kept for the record: Owner. Block:
+    across the room over a cover in a lit room, and over idle in a lit room and a dark one. The
+    original framing, kept for the record: Owner. Block:
     no -- resolved by observation on the real board, like the other legibility questions. This is
     the sharpest of them, since the marker is the whole signal that a cover cannot be trusted.
 - **Risk:** This slice is where the product's hardest guardrail is either honoured or broken, which
@@ -409,7 +409,8 @@ Foundations below assume these are present and do NOT re-scaffold them.
   Wi-Fi), so S-06 must make the Pi lose Spotify for over 30 s, e.g. by also disabling Wi-Fi.
   The blind case includes the playing placeholder too: for an item without artwork, or whose
   cover failed to download, the placeholder stays up unmarked however long reads fail (S-04
-  review, F7).
+  review, F7). Resolved 2026-11-10: the placeholder now carries the marker like every
+  presentation, and the outage test was run on 2026-11-11 by rejecting outbound HTTPS.
 - **Status:** in-progress
 
 ### S-07: One page reports what the service believes, and re-authorizes Spotify
@@ -498,7 +499,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
    Owner. Block: none, but it gates the acceptance criteria of `S-02` (idle display), `S-05`
    (generic no-artwork symbol) and `S-06` (staleness marker). Decided by looking at the real board,
    not on paper. Marker part settled 2026-11-11 (S-06): legible from across the room over a cover
-   and over idle, in a lit room and a dark one. See
+   in a lit room, and over idle in a lit room and a dark one. See
    `context/changes/staleness-marker-and-display-rule/verification.md`.
 5. **Track artwork or album artwork?** -- RESOLVED 2026-11-09 -- moot: a Spotify track carries no images of its own, only `album.images`; episodes carry their own. The original question is kept below for the record. Owner. Block: none; gates `S-04`. FR-017's cache shape
    was chosen so this does not need answering first.

@@ -247,13 +247,16 @@ def test_no_reader_is_plain_idle_however_long_it_has_been(previous: Presentation
     assert select_presentation(None, None, previous, NOW + timedelta(days=30)) == IDLE
 
 
+@pytest.mark.parametrize("failure", [ReadFailure.NETWORK, ReadFailure.AUTHORIZATION_NEEDED])
 @pytest.mark.parametrize("snapshot", [INITIAL_SNAPSHOT, NOTHING])
 @pytest.mark.parametrize(("failing_for", "stale"), [(29, False), (31, True)])
 def test_idle_is_stale_only_after_more_than_30_s_of_failing_reads(
-    snapshot: PlaybackSnapshot, failing_for: float, stale: bool
+    snapshot: PlaybackSnapshot, failing_for: float, stale: bool, failure: ReadFailure
 ) -> None:
-    # Blind, idle no longer knows that nothing plays (OQ2).
-    chosen = select_presentation(failing(snapshot, failing_for), None, None, NOW)
+    # Blind, idle no longer knows that nothing plays (OQ2), whatever the cause;
+    # an unauthorized cold start is the likeliest long blind spell (US-02).
+    blind = replace(failing(snapshot, failing_for), failure=failure)
+    chosen = select_presentation(blind, None, None, NOW)
 
     assert chosen == replace(IDLE, stale=stale)
 
