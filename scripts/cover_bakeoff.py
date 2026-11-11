@@ -70,6 +70,7 @@ import httpx2
 from PIL import Image, ImageDraw
 
 from spotify_to_led.board.factory import create_transport
+from spotify_to_led.board.transport import BoardTransport
 from spotify_to_led.config import Settings, load_settings
 from spotify_to_led.enhance import EnhanceError, generate
 from spotify_to_led.frames import with_stale_marker
@@ -254,30 +255,36 @@ async def run(sources: list[str], hold: float, enhance: bool) -> None:
     size = settings.board_size
     if enhance and settings.openrouter_api_key is None:
         raise SystemExit("--enhance needs OPENROUTER_API_KEY in the settings")
-    # One client for the downloads and the generations alike; a generation
-    # passes its own, longer timeout.
-    async with httpx2.AsyncClient(timeout=DOWNLOAD_TIMEOUT_SECONDS) as client:
-        covers = await load_covers(client, sources)
-        if enhance:
-            shots = await enhance_shots(client, covers, settings)
-            labels = ENHANCE_COLUMNS
-        else:
-            shots = render_shots(covers, size)
-            labels = MARKER_COLUMNS
-
-    # Written before the board is touched, so a board that will not connect
-    # still leaves something to review.
-    settings.stub_frame_dir.mkdir(parents=True, exist_ok=True)
-    sheet_path = settings.stub_frame_dir / CONTACT_SHEET_FILENAME
-    contact_sheet(shots, labels, len(covers), size).save(sheet_path, format="PNG")
-    print(f"contact sheet: {sheet_path}")
-    for index, cover in enumerate(covers, start=1):
-        print(f"  row {index}: {cover.name}")
-
     transport = create_transport(settings)
+    if enhance:
+        # Connected before generating, as the service will be: on the Pi,
+        # connecting only after a minute of generations failed on the first
+        # push with a GATT "Unlikely Error" twice, while a short run did not.
+        # It also means a board that will not connect costs nothing.
+        await _connect(transport, settings)
     try:
-        await transport.connect()
-        print(f"connected to the {settings.board_transport} board ({size}x{size})")
+        # One client for the downloads and the generations alike; a
+        # generation passes its own, longer timeout.
+        async with httpx2.AsyncClient(timeout=DOWNLOAD_TIMEOUT_SECONDS) as client:
+            covers = await load_covers(client, sources)
+            if enhance:
+                shots = await enhance_shots(client, covers, settings)
+                labels = ENHANCE_COLUMNS
+            else:
+                shots = render_shots(covers, size)
+                labels = MARKER_COLUMNS
+
+        # Written before the plain run touches the board, so a board that
+        # will not connect still leaves something to review.
+        settings.stub_frame_dir.mkdir(parents=True, exist_ok=True)
+        sheet_path = settings.stub_frame_dir / CONTACT_SHEET_FILENAME
+        contact_sheet(shots, labels, len(covers), size).save(sheet_path, format="PNG")
+        print(f"contact sheet: {sheet_path}")
+        for index, cover in enumerate(covers, start=1):
+            print(f"  row {index}: {cover.name}")
+
+        if not enhance:
+            await _connect(transport, settings)
         for number, shot in enumerate(shots, start=1):
             print(
                 f"[{number}/{len(shots)}] cover {shot.cover_index}/{len(covers)}"
@@ -287,6 +294,12 @@ async def run(sources: list[str], hold: float, enhance: bool) -> None:
             await asyncio.sleep(hold)
     finally:
         await transport.close()
+
+
+async def _connect(transport: BoardTransport, settings: Settings) -> None:
+    await transport.connect()
+    size = settings.board_size
+    print(f"connected to the {settings.board_transport} board ({size}x{size})")
 
 
 def main() -> None:
