@@ -489,13 +489,13 @@ the previous commit. Leftover `.ai.png` files are harmless.
 
 #### Automated
 
-- [x] 4.1 `uv run pytest` passes, including `/status` tests for each `cover` value and for `paused_until`
-- [ ] 4.2 `scripts/deploy.sh` succeeds and `/healthz` answers on the Pi
+- [x] 4.1 `uv run pytest` passes, including `/status` tests for each `cover` value and for `paused_until` — 3be6a3f
+- [x] 4.2 `scripts/deploy.sh` succeeds and `/healthz` answers on the Pi — 3be6a3f
 
 #### Manual
 
-- [ ] 4.3 On the board, a never-seen album shows the placeholder then the enhanced frame, and a same-album track or replay shows it immediately with no OpenRouter request
-- [ ] 4.4 Flipping the checkbox off and on mid-track redraws the board each way within a few seconds
-- [ ] 4.5 The checkbox state survives `pm2 restart spotify-to-led`
-- [ ] 4.6 With a deliberately wrong key, the page shows paused until 00:00 UTC and the board shows the plain cover
-- [ ] 4.7 During a forced Spotify outage, an enhanced cover gets the staleness marker after 30 s
+- [x] 4.3 On the board, a never-seen album shows the placeholder then the enhanced frame, and a same-album track or replay shows it immediately with no OpenRouter request — 3be6a3f
+- [x] 4.4 Flipping the checkbox off and on mid-track redraws the board each way within a few seconds — 3be6a3f
+- [x] 4.5 The checkbox state survives `pm2 restart spotify-to-led` — 3be6a3f
+- [x] 4.6 With a deliberately wrong key, the page shows paused until 00:00 UTC and the board shows the plain cover — 3be6a3f
+- [x] 4.7 During a forced Spotify outage, an enhanced cover gets the staleness marker after 30 s — 3be6a3f
