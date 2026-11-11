@@ -342,13 +342,13 @@ mention it are archived history and stay as they are.
 
 #### Automated
 
-- [x] 3.1 Test suite passes: `uv run pytest`
-- [x] 3.2 No stale mentions remain: `grep -n "playback\`\|not built yet" CLAUDE.md` is empty
+- [x] 3.1 Test suite passes: `uv run pytest` — da84e2c
+- [x] 3.2 No stale mentions remain: `grep -n "playback\`\|not built yet" CLAUDE.md` is empty — da84e2c
 
 #### Manual
 
-- [x] 3.3 Deployed to the Pi: the page opens through the Cloudflare edge from a phone off the home Wi-Fi, and shows the playing item and link up
-- [x] 3.4 Board switched off: the page shows link down within a few seconds while the page keeps answering; after it is switched back on, link up and the presentation are redrawn
-- [x] 3.5 Spotify outage (outbound HTTPS rejected, as in S-06) for over 30 s: the page names "cannot reach Spotify", shows the failing duration and that the board is marked stale; it clears after the outage
-- [x] 3.6 Re-authorize round trip from the page: Spotify consent, back on the page with the notice, and authorized-at and expiry updated
-- [x] 3.7 The page body and `pm2 logs` contain no access token, refresh token or authorization code
+- [x] 3.3 Deployed to the Pi: the page opens through the Cloudflare edge from a phone off the home Wi-Fi, and shows the playing item and link up — da84e2c
+- [x] 3.4 Board switched off: the page shows link down within a few seconds while the page keeps answering; after it is switched back on, link up and the presentation are redrawn — da84e2c
+- [x] 3.5 Spotify outage (outbound HTTPS rejected, as in S-06) for over 30 s: the page names "cannot reach Spotify", shows the failing duration and that the board is marked stale; it clears after the outage — da84e2c
+- [x] 3.6 Re-authorize round trip from the page: Spotify consent, back on the page with the notice, and authorized-at and expiry updated — da84e2c
+- [x] 3.7 The page body and `pm2 logs` contain no access token, refresh token or authorization code — da84e2c
