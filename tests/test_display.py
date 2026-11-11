@@ -25,6 +25,7 @@ from spotify_to_led.display import (
     IDLE,
     NO_ARTWORK,
     PLACEHOLDER,
+    DisplayStatus,
     Presentation,
     PresentationKind,
     run_display,
@@ -572,6 +573,24 @@ async def test_a_failed_push_is_retried_with_a_doubling_delay_until_it_lands(
     assert [w.getMessage().rsplit(" ", 2)[1] for w in warnings] == ["1.0", "2.0"]
     assert warnings[0].exc_info is not None, "the traceback must reach the log"
     assert not warnings[1].exc_info, "one traceback per presentation"
+
+
+async def test_the_status_records_the_presentation_and_whether_its_push_failed() -> None:
+    # The first push fails and its retry on the next sample lands.
+    board = FakeBoard(failing_pushes=1)
+    status = DisplayStatus()
+    seen: list[tuple[Presentation | None, bool]] = []
+    sleep = ActingSleep(
+        sleeps=2, actions={1: lambda: seen.append((status.presentation, status.push_failed))}
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_display(
+            board, SIZE, scripted(NOTHING, NOTHING), status=status, clock=lambda: NOW, sleep=sleep
+        )
+
+    assert seen == [(IDLE, True)]
+    assert (status.presentation, status.push_failed) == (IDLE, False)
 
 
 async def test_a_new_presentation_is_pushed_at_once_even_while_a_retry_waits() -> None:

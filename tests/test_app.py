@@ -12,6 +12,7 @@ its Spotify routes say so. With one, every Spotify request goes to a
 import logging
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -299,13 +300,47 @@ def test_without_a_client_id_the_app_serves_and_the_spotify_routes_say_so(
         healthz = client.get("/healthz")
         authorize = client.get("/authorize")
         callback = client.get("/callback", params={"code": A_CODE, "state": "any-state"})
-        playback = client.get("/playback")
+        status = client.get("/status")
 
     assert healthz.status_code == 200
     assert authorize.status_code == 503
     assert callback.status_code == 503
-    assert playback.status_code == 200
-    assert playback.json()["configured"] is False
+    assert status.status_code == 200
+    body = status.json()
+    assert body["configured"] is False
+    assert body["playback"] is None
+    assert body["authorization"] is None
+    # The board is reported whether or not Spotify is configured.
+    assert set(body["board"]) == {"link", "task_running", "presentation", "push_failed"}
+    assert body["board"]["task_running"] is True
+    assert body["stale_after_seconds"] == display.STALE_AFTER_SECONDS
+    assert body["now"] is not None
+
+
+def test_status_reports_the_link_down_once_the_display_task_has_ended(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The transport still believes the link is up, but with the task gone
+    # nothing would reconnect it, so the page must not say "up".
+    transport = CountingTransport()
+    use_transport(monkeypatch, transport, tmp_path)
+
+    async def connect_and_end(board: CountingTransport, *args: object, **kwargs: object) -> None:
+        await board.connect()
+
+    monkeypatch.setattr(main, "run_display", connect_and_end)
+
+    with TestClient(main.app) as client:
+        deadline = time.monotonic() + 5
+        board = client.get("/status").json()["board"]
+        while board["task_running"] and time.monotonic() < deadline:
+            time.sleep(0.05)
+            board = client.get("/status").json()["board"]
+        # Checked before shutdown, which closes the transport.
+        assert transport.link_state is LinkState.UP
+
+    assert board["task_running"] is False
+    assert board["link"] == "down"
 
 
 def test_authorize_redirects_to_spotify_with_the_configured_redirect_uri(
@@ -337,11 +372,11 @@ def test_a_callback_with_a_bad_state_is_rejected_without_an_exchange(
         client.get("/authorize")
         forged = client.get("/callback", params={"code": A_CODE, "state": "a-forged-state"})
         missing = client.get("/callback", params={"code": A_CODE})
-        playback = client.get("/playback").json()
+        authorization = client.get("/status").json()["authorization"]
 
     assert (forged.status_code, missing.status_code) == (400, 400)
     assert A_CODE not in forged.text
-    assert playback["authorized_at"] is None
+    assert authorization == {"authorized_at": None, "expires_around": None}
     assert not (tmp_path / "var" / "spotify-token.json").exists()
 
 
@@ -407,7 +442,7 @@ def test_a_refused_exchange_is_a_502(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert A_CODE not in response.text
 
 
-def test_authorize_callback_and_playback_end_to_end_with_no_token_in_any_answer(
+def test_authorize_callback_and_status_end_to_end_with_no_token_in_any_answer(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     spotify = FakeSpotify()
@@ -421,34 +456,39 @@ def test_authorize_callback_and_playback_end_to_end_with_no_token_in_any_answer(
         # The read is answered before the reader records it, so wait for the
         # snapshot rather than for the request.
         deadline = time.monotonic() + 5
-        playback = client.get("/playback")
-        while playback.json()["status"] != "playing" and time.monotonic() < deadline:
+        status = client.get("/status")
+        while status.json()["playback"]["status"] != "playing" and time.monotonic() < deadline:
             time.sleep(0.05)
-            playback = client.get("/playback")
+            status = client.get("/status")
 
     assert callback.status_code == 200
     assert "succeeded" in callback.text
     assert A_CODE not in callback.text
-    body = playback.json()
-    assert body["configured"] is True
-    assert body["status"] == "playing"
-    assert body["failure"] is None
-    assert body["authorized_at"] is not None
-    assert body["item"]["id"] == "track-1"
-    assert body["item"]["artwork"] == [
-        {"url": "https://i.scdn.co/image/a", "width": 640, "height": 640}
-    ]
+    body = status.json()
     assert set(body) == {
         "configured",
-        "status",
-        "item",
-        "failure",
-        "failure_since",
-        "last_read_at",
-        "authorized_at",
+        "playback",
+        "authorization",
+        "board",
+        "stale_after_seconds",
+        "now",
     }
+    assert body["configured"] is True
+    playback = body["playback"]
+    assert set(playback) == {"status", "item", "failure", "failure_since", "last_read_at"}
+    assert playback["status"] == "playing"
+    assert playback["failure"] is None
+    assert playback["item"]["id"] == "track-1"
+    assert playback["item"]["artwork"] == [
+        {"url": "https://i.scdn.co/image/a", "width": 640, "height": 640}
+    ]
+    authorized_at = datetime.fromisoformat(body["authorization"]["authorized_at"])
+    expires_around = datetime.fromisoformat(body["authorization"]["expires_around"])
+    assert expires_around - authorized_at == timedelta(days=182)
+    assert body["board"]["link"] == "up"
+    assert body["board"]["task_running"] is True
     for secret in (AN_ACCESS_TOKEN, A_REFRESH_TOKEN, A_CODE):
-        assert secret not in playback.text
+        assert secret not in status.text
     assert (tmp_path / "var" / "spotify-token.json").exists(), "the grant must be saved"
 
 
