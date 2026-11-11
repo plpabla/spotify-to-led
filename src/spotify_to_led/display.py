@@ -191,10 +191,15 @@ def select_presentation(
         chosen = PLACEHOLDER
     # Whatever the kind, and recomputed for a kept presentation too: staleness
     # is about the reads now, not about when the presentation was chosen.
-    return replace(chosen, stale=_is_stale(snapshot, now))
+    return replace(chosen, stale=is_stale(snapshot, now))
 
 
-def _is_stale(snapshot: PlaybackSnapshot, now: datetime) -> bool:
+def is_stale(snapshot: PlaybackSnapshot, now: datetime) -> bool:
+    """Whether the service can no longer vouch for `snapshot` at `now` (FR-018).
+
+    Public because the status page must say what the board's marker says, by
+    this very rule rather than a copy of it.
+    """
     limit = timedelta(seconds=STALE_AFTER_SECONDS)
     if snapshot.failure_since is not None and now - snapshot.failure_since > limit:
         return True
@@ -289,6 +294,8 @@ async def run_display(
         except Exception:
             # A bug must not end the display, as in `SpotifyReader.run`.
             logger.exception("unexpected error in the display loop; it keeps running")
+            # Whatever was being sent did not reach the board as reported.
+            status.push_failed = True
         await sleep(SAMPLE_INTERVAL_SECONDS)
 
 

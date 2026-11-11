@@ -27,6 +27,7 @@ from spotify_to_led.board.stub import PngBoardTransport
 from spotify_to_led.board.transport import LinkState, frame_to_pixel_colors
 from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
 from spotify_to_led.spotify.auth import AUTHORIZE_URL, SCOPE, TOKEN_URL
+from spotify_to_led.spotify.playback import PlaybackSnapshot, PlaybackStatus, ReadFailure
 
 # `frames` is imported as a module, not as a symbol: a bare `test_pattern`
 # name in this namespace would be collected as a test case.
@@ -379,6 +380,33 @@ def test_authorize_redirects_to_spotify_with_the_configured_redirect_uri(
     assert query["client_id"] == [A_CLIENT_ID]
 
 
+@pytest.mark.parametrize(
+    ("failure", "since_ago", "read_ago", "stale"),
+    [
+        # Failing for 25 s, last good read 33 s ago: the board is marked, by
+        # the age of the read, before the failure itself is 30 s old.
+        (ReadFailure.NETWORK, 25, 33, True),
+        # Reads stopped without failing: still marked, never "healthy".
+        (None, None, 31, True),
+        (None, None, 2, False),
+    ],
+)
+def test_status_reports_staleness_by_the_display_rule(
+    failure: ReadFailure | None, since_ago: float | None, read_ago: float, stale: bool
+) -> None:
+    now = datetime.fromisoformat("2026-11-11T12:00:00+00:00")
+    snapshot = PlaybackSnapshot(
+        status=PlaybackStatus.NOTHING_PLAYING,
+        item=None,
+        failure=failure,
+        failure_since=now - timedelta(seconds=since_ago) if since_ago is not None else None,
+        last_read_at=now - timedelta(seconds=read_ago),
+        authorized_at=None,
+    )
+
+    assert main._playback_json(snapshot, now)["stale"] is stale
+
+
 def test_a_callback_with_a_bad_state_is_rejected_without_an_exchange(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -393,6 +421,7 @@ def test_a_callback_with_a_bad_state_is_rejected_without_an_exchange(
         authorization = client.get("/status").json()["authorization"]
 
     assert (forged.status_code, missing.status_code) == (400, 400)
+    assert "Status page: /" in forged.text and "Status page: /" in missing.text
     assert A_CODE not in forged.text
     assert authorization == {"authorized_at": None, "expires_around": None}
     assert not (tmp_path / "var" / "spotify-token.json").exists()
@@ -447,6 +476,7 @@ def test_an_undecodable_token_answer_is_a_502_not_a_crash(
         response = client.get("/callback", params={"code": A_CODE, "state": state})
 
     assert response.status_code == 502
+    assert "Status page: /" in response.text
 
 
 def test_a_refused_exchange_is_a_502(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -458,6 +488,7 @@ def test_a_refused_exchange_is_a_502(monkeypatch: pytest.MonkeyPatch, tmp_path: 
         response = client.get("/callback", params={"code": A_CODE, "state": state})
 
     assert response.status_code == 502
+    assert "Status page: /" in response.text
     assert A_CODE not in response.text
 
 
@@ -494,7 +525,9 @@ def test_authorize_callback_and_status_end_to_end_with_no_token_in_any_answer(
     }
     assert body["configured"] is True
     playback = body["playback"]
-    assert set(playback) == {"status", "item", "failure", "failure_since", "last_read_at"}
+    assert set(playback) == {
+        "status", "item", "failure", "failure_since", "last_read_at", "stale"
+    }
     assert playback["status"] == "playing"
     assert playback["failure"] is None
     assert playback["item"]["id"] == "track-1"

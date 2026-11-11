@@ -22,7 +22,7 @@
 <body>
 <h1>spotify-to-led</h1>
 <section id="notice" class="notice" hidden><p>Spotify authorization succeeded.</p></section>
-<section id="unreachable" class="alert" hidden><p class="bad">The service is not answering.</p><p class="muted">This page retries every 3 seconds.</p></section>
+<section id="unreachable" class="alert" hidden><p class="bad">The service is not answering.</p><p class="muted">This page retries every 3 seconds. If it stays like this, your Cloudflare Access sign-in may have expired: reload the page.</p></section>
 <div id="sections">
   <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
   <section id="reading"><h2>Reading Spotify</h2></section>
@@ -45,6 +45,8 @@ const KINDS = { cover: "cover", idle: "idle", placeholder: "placeholder", no_art
 
 if (new URLSearchParams(location.search).get("authorized") === "1") {
   document.getElementById("notice").hidden = false;
+  // Shown once: a reload or a bookmark must not claim success again later.
+  history.replaceState(null, "", "/");
 }
 
 function el(tag, text, cls) {
@@ -100,11 +102,14 @@ function renderReading(data, now) {
     parts.push(el("p", "Failing: " + (CAUSES[playback.failure] || playback.failure), "bad"));
     if (playback.failure_since) {
       parts.push(el("p", "Failing for " + since(now, playback.failure_since) + "."));
-      const stale = (now - parse(playback.failure_since)) / 1000 > data.stale_after_seconds;
-      parts.push(el("p", stale
+      parts.push(el("p", playback.stale
         ? "The board is now marked stale (failing for over " + data.stale_after_seconds + " s)."
         : "The board is not marked stale yet (after " + data.stale_after_seconds + " s)."));
     }
+  } else if (playback.stale) {
+    // Reads stopped without failing: the board is marked all the same.
+    parts.push(el("p", "No good read for " + since(now, playback.last_read_at)
+      + "; the board is marked stale.", "bad"));
   } else if (playback.last_read_at) {
     parts.push(el("p", "Healthy.", "good"));
   } else {

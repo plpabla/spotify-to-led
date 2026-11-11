@@ -593,6 +593,23 @@ async def test_the_status_records_the_presentation_and_whether_its_push_failed()
     assert (status.presentation, status.push_failed) == (IDLE, False)
 
 
+async def test_the_status_records_a_stale_presentation() -> None:
+    status = DisplayStatus()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_display(
+            FakeBoard(),
+            SIZE,
+            scripted(failing(NOTHING, 31)),
+            status=status,
+            clock=lambda: NOW,
+            sleep=FakeSleep(sleeps=1),
+        )
+
+    assert status.presentation == replace(IDLE, stale=True)
+    assert status.push_failed is False
+
+
 async def test_a_new_presentation_is_pushed_at_once_even_while_a_retry_waits() -> None:
     board = FakeBoard(failing_pushes=1)
     current = scripted(NOTHING, PLAYING, PLAYING)

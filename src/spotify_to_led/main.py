@@ -46,7 +46,7 @@ from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.transport import BoardTransport, LinkState
 from spotify_to_led.config import load_settings
 from spotify_to_led.covers import CoverLoader
-from spotify_to_led.display import STALE_AFTER_SECONDS, DisplayStatus, run_display
+from spotify_to_led.display import STALE_AFTER_SECONDS, DisplayStatus, is_stale, run_display
 from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
@@ -273,9 +273,11 @@ async def status(request: Request) -> dict[str, Any]:
     """
     reader = _reader(request)
     snapshot = reader.snapshot if reader is not None else None
+    # One instant for staleness and `now`, so the page's durations agree with it.
+    now = datetime.now(UTC)
     return {
         "configured": reader is not None,
-        "playback": _playback_json(snapshot) if snapshot is not None else None,
+        "playback": _playback_json(snapshot, now) if snapshot is not None else None,
         "authorization": _authorization_json(snapshot) if snapshot is not None else None,
         "board": _board_json(
             request.app.state.transport,
@@ -283,17 +285,20 @@ async def status(request: Request) -> dict[str, Any]:
             request.app.state.display_status,
         ),
         "stale_after_seconds": STALE_AFTER_SECONDS,
-        "now": datetime.now(UTC),
+        "now": now,
     }
 
 
-def _playback_json(snapshot: PlaybackSnapshot) -> dict[str, Any]:
+def _playback_json(snapshot: PlaybackSnapshot, now: datetime) -> dict[str, Any]:
     return {
         "status": snapshot.status,
         "item": asdict(snapshot.item) if snapshot.item is not None else None,
         "failure": snapshot.failure,
         "failure_since": snapshot.failure_since,
         "last_read_at": snapshot.last_read_at,
+        # The display rule's own verdict, so the page cannot disagree with
+        # the marker on the board.
+        "stale": is_stale(snapshot, now),
     }
 
 
