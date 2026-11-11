@@ -77,7 +77,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | S-04 | `artwork-on-the-board`                      | see the artwork of whatever is playing, and see it change when the item changes                             | S-02             | US-01, FR-006, FR-007, FR-008, FR-016, NFR-01   | done |
 | S-05 | `all-item-types-and-frame-reuse`            | see artwork for any item type including podcasts, with repeated artwork never re-rendered                   | S-04             | US-01, FR-010, FR-017                           | done |
 | S-06 | `staleness-marker-and-display-rule`         | tell at a glance that the board can no longer vouch for what it is showing                                  | S-04             | US-02, US-04, FR-004, FR-009, FR-018            | done        |
-| S-07 | `status-and-reauthorization-page`           | open one page, read what the service believes and whether the board link is alive, and re-authorize Spotify | S-01, F-03, S-06 | US-02, US-06, FR-004, FR-005, FR-015            | proposed |
+| S-07 | `status-and-reauthorization-page`           | open one page, read what the service believes and whether the board link is alive, and re-authorize Spotify | S-01, F-03, S-06 | US-02, US-06, FR-004, FR-005, FR-015            | done |
 | S-08 | `ai-enhanced-covers`                        | see an AI-enhanced version of the playing cover, made for the 32x32 panel rather than shrunk to it          | S-04, S-05       | -- (PRD v1 non-goal; post-v1, M-2)              | deferred |
 
 ## Streams
@@ -434,7 +434,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   board task, so a crash in the BLE loop is reported as link-down rather than killing the server and
   taking the explanation with it. The riskiest part of this slice -- OAuth completing over the
   Cloudflare edge -- is already proven in S-01, which is deliberate.
-- **Status:** proposed
+- **Status:** done
 
 ### S-08: AI-enhanced covers (post-v1, M-2)
 
@@ -591,3 +591,5 @@ closes.)
   `context/archive/2026-11-09-all-item-types-and-frame-reuse/`. Lesson: --.
 - **S-06: Owner can tell at a glance that the board can no longer vouch for what it is showing, because after a 30-second grace period a persistent corner marker appears on it -- for any cause, whether network failure, API errors or rate limiting, or refused authorization.** -- Archived 2026-11-11 ->
   `context/archive/2026-11-10-staleness-marker-and-display-rule/`. Lesson: --.
+- **S-07: Owner can open one page from any device they are logged in on, read the item the service believes is playing or that nothing is, see whether the board link is alive, see which cause is behind a failure to read the account, and re-authorize Spotify -- with no restart and no physical access to the Pi.** -- Archived 2026-11-11 ->
+  `context/archive/2026-11-11-status-and-reauthorization-page/`. Lesson: --.

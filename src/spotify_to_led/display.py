@@ -133,6 +133,19 @@ PLACEHOLDER = Presentation(PresentationKind.PLACEHOLDER)
 NO_ARTWORK = Presentation(PresentationKind.NO_ARTWORK)
 
 
+@dataclass
+class DisplayStatus:
+    """What `run_display` last sent the board, for the status page to report.
+
+    `presentation` is the one last attempted, `None` before the first push;
+    `push_failed` is whether its latest push failed. Written only by the loop
+    and read by the routes, both on the one event loop, so no lock is needed.
+    """
+
+    presentation: Presentation | None = None
+    push_failed: bool = False
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -178,10 +191,15 @@ def select_presentation(
         chosen = PLACEHOLDER
     # Whatever the kind, and recomputed for a kept presentation too: staleness
     # is about the reads now, not about when the presentation was chosen.
-    return replace(chosen, stale=_is_stale(snapshot, now))
+    return replace(chosen, stale=is_stale(snapshot, now))
 
 
-def _is_stale(snapshot: PlaybackSnapshot, now: datetime) -> bool:
+def is_stale(snapshot: PlaybackSnapshot, now: datetime) -> bool:
+    """Whether the service can no longer vouch for `snapshot` at `now` (FR-018).
+
+    Public because the status page must say what the board's marker says, by
+    this very rule rather than a copy of it.
+    """
     limit = timedelta(seconds=STALE_AFTER_SECONDS)
     if snapshot.failure_since is not None and now - snapshot.failure_since > limit:
         return True
@@ -196,6 +214,7 @@ async def run_display(
     current: Callable[[], PlaybackSnapshot | None],
     *,
     covers: CoverLoader | None = None,
+    status: DisplayStatus | None = None,
     clock: Clock = _utc_now,
     sleep: Sleep = asyncio.sleep,
 ) -> None:
@@ -203,10 +222,13 @@ async def run_display(
 
     `current` returns the believed state, or `None` when there is no reader.
     `covers` downloads the covers; without one, an item with artwork shows the
-    placeholder.
+    placeholder. `status`, when given, is kept up to date with the
+    presentation last attempted and whether its push failed.
     Nothing but `CancelledError` leaves this coroutine: the task must not be
     able to prevent the application from serving.
     """
+    if status is None:
+        status = DisplayStatus()
     await _connect(transport, sleep)
     # What was last drawn, and on which connection of the link; `None` until
     # the first push, so the first sample always draws.
@@ -250,6 +272,9 @@ async def run_display(
                 # Recorded before the push, so a failed push is retried on its
                 # own backoff below rather than on every sample.
                 attempted = wanted
+                status.presentation = presentation
+                # The last failure belongs to the presentation before this one.
+                status.push_failed = False
                 retry_delay = PUSH_RETRY_INITIAL_SECONDS
                 due = True
             elif push_failed:
@@ -262,12 +287,15 @@ async def run_display(
                 push_failed = not await _push(
                     transport, _frame_for(wanted[0], size, retained), retry_delay, first
                 )
+                status.push_failed = push_failed
                 if push_failed:
                     retry_in = retry_delay
                     retry_delay = min(retry_delay * 2, PUSH_RETRY_MAX_SECONDS)
         except Exception:
             # A bug must not end the display, as in `SpotifyReader.run`.
             logger.exception("unexpected error in the display loop; it keeps running")
+            # Whatever was being sent did not reach the board as reported.
+            status.push_failed = True
         await sleep(SAMPLE_INTERVAL_SECONDS)
 
 

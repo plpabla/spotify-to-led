@@ -17,6 +17,10 @@ cover seen before, even before a restart, is shown without a download. A
 cover is marked once reads have been failing for over 30 s. It pushes again
 whenever that choice changes or the link comes back.
 
+The status page at `/` is static and renders `/status`, which reports the
+believed playback, the authorization and the board link, including the case
+where the display task has ended, so a board fault is explained, not hidden.
+
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
 test suite start the same app the Pi does.
@@ -29,17 +33,20 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx2
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
 from spotify_to_led.board.factory import create_transport
+from spotify_to_led.board.transport import BoardTransport, LinkState
 from spotify_to_led.config import load_settings
 from spotify_to_led.covers import CoverLoader
-from spotify_to_led.display import run_display
+from spotify_to_led.display import STALE_AFTER_SECONDS, DisplayStatus, is_stale, run_display
 from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
@@ -52,7 +59,13 @@ NOT_CONFIGURED = "Spotify is not configured on this service (SPOTIFY_CLIENT_ID i
 # Spotify's error codes are short snake_case words; anything else on the query
 # is not echoed, so a crafted link cannot put its own text on this page.
 SPOTIFY_ERROR_CODE = re.compile(r"[a-z_]{1,64}")
-SNAPSHOT_FIELDS = ("status", "item", "failure", "failure_since", "last_read_at", "authorized_at")
+# Spotify ends a refresh token about 6 months after the authorization that
+# granted it, and refreshing does not extend that. Spotify reports no expiry,
+# so this is an estimate for the status page, never a deadline the code acts on.
+REFRESH_TOKEN_LIFETIME = timedelta(days=182)
+# Beside the package rather than the working directory, so the page is found
+# from the checkout under pm2 and from the tests alike.
+STATUS_PAGE = Path(__file__).parent / "static" / "index.html"
 
 
 def _drop_query_strings(record: logging.LogRecord) -> bool:
@@ -128,9 +141,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         return reader.snapshot if reader is not None else None
 
     # Started after the reader exists, because `current` closes over it.
+    display_status = DisplayStatus()
     task = asyncio.create_task(
-        run_display(transport, settings.board_size, current, covers=covers)
+        run_display(transport, settings.board_size, current, covers=covers, status=display_status)
     )
+    # For `/status`, which reports the board without reaching into the loop.
+    app.state.transport = transport
+    app.state.display_task = task
+    app.state.display_status = display_status
 
     try:
         yield
@@ -165,11 +183,21 @@ def _reader(request: Request) -> SpotifyReader | None:
 async def healthz() -> dict[str, str]:
     """Report that the process is serving, and nothing else.
 
-    Link state, the playing item and re-authorization belong to FR-015, which
-    is scheduled for S-07. Keeping them out of here is what lets this route
-    stay truthful while the board is down.
+    Link state, the playing item and re-authorization belong to FR-015's
+    status page and `/status`. Keeping them out of here is what lets this
+    route stay truthful while the board is down.
     """
     return {"status": "ok"}
+
+
+@app.get("/")
+async def status_page() -> HTMLResponse:
+    """The status page, which renders `/status` in the browser.
+
+    Static on purpose: everything it shows comes from `/status`, so nothing
+    from Spotify is ever put into HTML on the server.
+    """
+    return HTMLResponse(STATUS_PAGE.read_text(encoding="utf-8"))
 
 
 @app.get("/authorize")
@@ -191,11 +219,12 @@ async def callback(
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
-) -> PlainTextResponse:
+) -> Response:
     """Finish the authorization Spotify redirected back with.
 
-    The code is never echoed: every answer here is a fixed sentence, plus
-    Spotify's own error name when it refused.
+    Success lands on the status page, which shows a fixed notice for it. The
+    code is never echoed: every other answer is a fixed sentence, plus
+    Spotify's own error name when it refused, pointing back to the page.
     """
     reader = _reader(request)
     if reader is None:
@@ -203,19 +232,22 @@ async def callback(
     if error is not None:
         named = error if SPOTIFY_ERROR_CODE.fullmatch(error) else "unknown error"
         return PlainTextResponse(
-            f"Spotify did not authorize the service ({named}). Start again at /authorize.",
+            f"Spotify did not authorize the service ({named}). Start again at /authorize. "
+            "Status page: /",
             status_code=400,
         )
     if code is None or state is None:
         return PlainTextResponse(
-            "The callback is missing its code or state. Start again at /authorize.",
+            "The callback is missing its code or state. Start again at /authorize. "
+            "Status page: /",
             status_code=400,
         )
     try:
         await reader.complete_authorization(code, state)
     except AuthorizationStateMismatch:
         return PlainTextResponse(
-            "This is not the authorization the service started. Start again at /authorize.",
+            "This is not the authorization the service started. Start again at /authorize. "
+            "Status page: /",
             status_code=400,
         )
     except (AuthorizationRevoked, SpotifyAuthError, httpx2.RequestError) as failure:
@@ -223,34 +255,80 @@ async def callback(
         # verifier, and nothing derived from it belongs in the log.
         logger.warning("Spotify code exchange failed (%s)", type(failure).__name__)
         return PlainTextResponse(
-            "Spotify could not complete the authorization. Try again at /authorize.",
+            "Spotify could not complete the authorization. Try again at /authorize. "
+            "Status page: /",
             status_code=502,
         )
-    return PlainTextResponse("Spotify authorization succeeded. You can close this tab.")
+    return RedirectResponse("/?authorized=1", status_code=303)
 
 
-@app.get("/playback")
-async def playback(request: Request) -> dict[str, Any]:
-    """The believed playback state, as JSON.
+@app.get("/status")
+async def status(request: Request) -> dict[str, Any]:
+    """The believed playback state, the authorization and the board, as JSON.
 
-    Temporary: it lets S-01 be verified before the status page exists, and
-    S-07 replaces it. The fields are named one by one rather than dumped from
-    the reader, so no token can reach this response by a field added elsewhere.
+    The fields are named one by one rather than dumped from the reader or the
+    loop, so no token can reach this response by a field added elsewhere.
+    `playback` and `authorization` are `null` when Spotify is not configured;
+    the board is reported either way.
     """
     reader = _reader(request)
-    if reader is None:
-        return {"configured": False, **dict.fromkeys(SNAPSHOT_FIELDS)}
-    return {"configured": True, **_snapshot_json(reader.snapshot)}
+    snapshot = reader.snapshot if reader is not None else None
+    # One instant for staleness and `now`, so the page's durations agree with it.
+    now = datetime.now(UTC)
+    return {
+        "configured": reader is not None,
+        "playback": _playback_json(snapshot, now) if snapshot is not None else None,
+        "authorization": _authorization_json(snapshot) if snapshot is not None else None,
+        "board": _board_json(
+            request.app.state.transport,
+            request.app.state.display_task,
+            request.app.state.display_status,
+        ),
+        "stale_after_seconds": STALE_AFTER_SECONDS,
+        "now": now,
+    }
 
 
-def _snapshot_json(snapshot: PlaybackSnapshot) -> dict[str, Any]:
+def _playback_json(snapshot: PlaybackSnapshot, now: datetime) -> dict[str, Any]:
     return {
         "status": snapshot.status,
         "item": asdict(snapshot.item) if snapshot.item is not None else None,
         "failure": snapshot.failure,
         "failure_since": snapshot.failure_since,
         "last_read_at": snapshot.last_read_at,
-        "authorized_at": snapshot.authorized_at,
+        # The display rule's own verdict, so the page cannot disagree with
+        # the marker on the board.
+        "stale": is_stale(snapshot, now),
+    }
+
+
+def _authorization_json(snapshot: PlaybackSnapshot) -> dict[str, Any]:
+    authorized_at = snapshot.authorized_at
+    return {
+        "authorized_at": authorized_at,
+        "expires_around": (
+            authorized_at + REFRESH_TOKEN_LIFETIME if authorized_at is not None else None
+        ),
+    }
+
+
+def _board_json(
+    transport: BoardTransport, task: asyncio.Task[None], display: DisplayStatus
+) -> dict[str, Any]:
+    running = not task.done()
+    # Once the task has ended nothing drives reconnects, so whatever the
+    # transport last believed, the link is as good as down.
+    link = transport.link_state if running else LinkState.DOWN
+    presentation = display.presentation
+    return {
+        "link": link,
+        "task_running": running,
+        "presentation": (
+            {"kind": presentation.kind, "url": presentation.url, "stale": presentation.stale}
+            if presentation is not None
+            else None
+        ),
+        "push_failed": display.push_failed,
     }
 
 
