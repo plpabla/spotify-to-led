@@ -78,7 +78,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | S-05 | `all-item-types-and-frame-reuse`            | see artwork for any item type including podcasts, with repeated artwork never re-rendered                   | S-04             | US-01, FR-010, FR-017                           | done |
 | S-06 | `staleness-marker-and-display-rule`         | tell at a glance that the board can no longer vouch for what it is showing                                  | S-04             | US-02, US-04, FR-004, FR-009, FR-018            | done        |
 | S-07 | `status-and-reauthorization-page`           | open one page, read what the service believes and whether the board link is alive, and re-authorize Spotify | S-01, F-03, S-06 | US-02, US-06, FR-004, FR-005, FR-015            | done |
-| S-08 | `ai-enhanced-covers`                        | see an AI-enhanced version of the playing cover, made for the 32x32 panel rather than shrunk to it          | S-04, S-05       | -- (PRD v1 non-goal; post-v1, M-2)              | deferred |
+| S-08 | `ai-enhanced-covers`                        | see an AI-enhanced version of the playing cover, made for the 32x32 panel rather than shrunk to it          | S-04, S-05       | -- (PRD v1 non-goal; post-v1, M-2)              | in-progress |
 
 ## Streams
 
@@ -465,7 +465,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   introducing this step discards the whole cache and re-downloads every image. Keep the step
   behind `render_cover` (S-04), and make the cache key carry the renderer's identity (S-05) if
   both renderings must coexist.
-- **Status:** deferred
+- **Status:** in-progress
 
 ## Backlog Handoff
 

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The square sizes `ScreenSize` declares. Repeated here rather than imported so
@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     spotify_token_file: Path = Path("var/spotify-token.json")
     # Rendered covers, kept across restarts; one subdirectory per board size.
     cover_cache_dir: Path = Path("var/covers")
+    # Optional like Spotify: without a key no cover is ever sent to OpenRouter.
+    # A `SecretStr`, so the key reads as asterisks in a repr, a log line or a
+    # validation error, and only `get_secret_value` hands it out.
+    openrouter_api_key: SecretStr | None = None
+    # About $0.009 an image, and the model the proof of concept was judged on.
+    openrouter_model: str = "black-forest-labs/flux-3-image-klein"
 
     @property
     def spotify_enabled(self) -> bool:
@@ -71,6 +77,18 @@ class Settings(BaseSettings):
         redirect URI, and a `.env` copied from it must start without Spotify.
         """
         if value is not None and not value.strip():
+            return None
+        return value
+
+    @field_validator("openrouter_api_key")
+    @classmethod
+    def _blank_api_key_means_unset(cls, value: SecretStr | None) -> SecretStr | None:
+        """Read an empty OpenRouter key as "not configured", as for the client ID.
+
+        An env file that names the key with no value must start without
+        enhancement, not with a key OpenRouter will refuse on every call.
+        """
+        if value is not None and not value.get_secret_value().strip():
             return None
         return value
 
