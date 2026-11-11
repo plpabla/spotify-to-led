@@ -60,6 +60,7 @@ DRAWN: dict[str, Image.Image] = {
     "cover a": COVER_A,
     "cover b": COVER_B,
     "stale cover a": frames.with_stale_marker(COVER_A),
+    "stale idle": frames.with_stale_marker(frames.idle(SIZE)),
 }
 
 
@@ -91,8 +92,19 @@ def playing(
 PLAYING = playing(A_URL)
 
 
+def failing(snapshot: PlaybackSnapshot, seconds: float) -> PlaybackSnapshot:
+    """`snapshot` with reads failing for `seconds`."""
+    return replace(
+        snapshot, failure=ReadFailure.NETWORK, failure_since=NOW - timedelta(seconds=seconds)
+    )
+
+
 def cover(url: str, stale: bool = False) -> Presentation:
     return Presentation(PresentationKind.COVER, url, stale)
+
+
+def marked(presentation: Presentation) -> Presentation:
+    return replace(presentation, stale=True)
 
 
 class FakeBoard:
@@ -217,15 +229,9 @@ async def run_until_out_of_sleeps(
     "snapshot",
     [
         None,
+        # A reader that has neither failed nor read yet has nothing to be stale about.
         INITIAL_SNAPSHOT,
         NOTHING,
-        # Blind with no cover to mark stays as it was: OQ2, S-06's.
-        replace(NOTHING, failure=ReadFailure.NETWORK, failure_since=NOW - timedelta(hours=1)),
-        replace(
-            INITIAL_SNAPSHOT,
-            failure=ReadFailure.AUTHORIZATION_NEEDED,
-            failure_since=NOW - timedelta(hours=1),
-        ),
     ],
 )
 def test_no_reader_unknown_and_nothing_playing_select_idle(
@@ -233,6 +239,26 @@ def test_no_reader_unknown_and_nothing_playing_select_idle(
 ) -> None:
     assert wanted_cover_url(snapshot, SIZE) is None
     assert select_presentation(snapshot, None, cover(A_URL), NOW) == IDLE
+
+
+@pytest.mark.parametrize("previous", [marked(IDLE), None])
+def test_no_reader_is_plain_idle_however_long_it_has_been(previous: Presentation | None) -> None:
+    # Spotify not configured is a setup mode, not blindness.
+    assert select_presentation(None, None, previous, NOW + timedelta(days=30)) == IDLE
+
+
+@pytest.mark.parametrize("failure", [ReadFailure.NETWORK, ReadFailure.AUTHORIZATION_NEEDED])
+@pytest.mark.parametrize("snapshot", [INITIAL_SNAPSHOT, NOTHING])
+@pytest.mark.parametrize(("failing_for", "stale"), [(29, False), (31, True)])
+def test_idle_is_stale_only_after_more_than_30_s_of_failing_reads(
+    snapshot: PlaybackSnapshot, failing_for: float, stale: bool, failure: ReadFailure
+) -> None:
+    # Blind, idle no longer knows that nothing plays (OQ2), whatever the cause;
+    # an unauthorized cold start is the likeliest long blind spell (US-02).
+    blind = replace(failing(snapshot, failing_for), failure=failure)
+    chosen = select_presentation(blind, None, None, NOW)
+
+    assert chosen == replace(IDLE, stale=stale)
 
 
 def test_nothing_playing_wants_no_cover_even_with_an_item() -> None:
@@ -316,37 +342,61 @@ def test_a_cover_is_stale_when_reads_stop_without_failing(read_ago: float, stale
     assert select_presentation(snapshot, (A_URL, READY_A), None, NOW) == cover(A_URL, stale)
 
 
+@pytest.mark.parametrize("previous", [cover(A_URL), IDLE, PLACEHOLDER, NO_ARTWORK])
 @pytest.mark.parametrize(("failing_for", "stale"), [(29, False), (31, True)])
-def test_a_cover_kept_through_a_changeover_is_marked_by_the_reads_now(
-    failing_for: float, stale: bool
+def test_a_presentation_kept_through_a_changeover_is_marked_by_the_reads_now(
+    previous: Presentation, failing_for: float, stale: bool
 ) -> None:
+    # Playback starting from idle while blind keeps idle, and marks it.
     snapshot = playing(B_URL, failing_for=failing_for)
 
-    chosen = select_presentation(snapshot, (B_URL, PENDING), cover(A_URL), NOW)
+    chosen = select_presentation(snapshot, (B_URL, PENDING), previous, NOW)
 
-    assert chosen == cover(A_URL, stale)
-
-
-def test_the_marker_clears_when_reads_recover() -> None:
-    marked = cover(A_URL, stale=True)
-
-    assert select_presentation(playing(A_URL), (A_URL, READY_A), marked, NOW) == cover(A_URL)
-    assert select_presentation(playing(B_URL), (B_URL, PENDING), marked, NOW) == cover(A_URL)
+    assert chosen == replace(previous, stale=stale)
 
 
-def test_the_placeholder_is_never_marked() -> None:
-    failing = playing(A_URL, failing_for=600)
+@pytest.mark.parametrize("previous", [cover(A_URL), IDLE, PLACEHOLDER, NO_ARTWORK])
+def test_the_marker_clears_when_reads_recover(previous: Presentation) -> None:
+    # A kept presentation is judged afresh, never carried over marked.
+    kept = select_presentation(playing(B_URL), (B_URL, PENDING), marked(previous), NOW)
+    ready = select_presentation(playing(A_URL), (A_URL, READY_A), marked(previous), NOW)
 
-    assert select_presentation(failing, (A_URL, FAILED), None, NOW) == PLACEHOLDER
-    assert select_presentation(failing, (A_URL, PENDING), PLACEHOLDER, NOW) == PLACEHOLDER
+    assert kept == previous
+    assert ready == cover(A_URL)
 
 
-def test_the_symbol_is_never_marked() -> None:
-    failing = playing(None, failing_for=600)
-    stopped = replace(playing(None), last_read_at=NOW - timedelta(seconds=600))
+@pytest.mark.parametrize(
+    "cover_state",
+    [
+        pytest.param((A_URL, FAILED), id="failed download"),
+        pytest.param(None, id="no loader"),
+    ],
+)
+@pytest.mark.parametrize(("failing_for", "stale"), [(29, False), (31, True)])
+def test_the_placeholder_is_stale_only_after_more_than_30_s_of_failing_reads(
+    cover_state: tuple[str, CoverState] | None, failing_for: float, stale: bool
+) -> None:
+    snapshot = playing(A_URL, failing_for=failing_for)
 
-    assert select_presentation(failing, None, cover(A_URL, stale=True), NOW) == NO_ARTWORK
-    assert select_presentation(stopped, None, None, NOW) == NO_ARTWORK
+    chosen = select_presentation(snapshot, cover_state, None, NOW)
+
+    assert chosen == replace(PLACEHOLDER, stale=stale)
+
+
+@pytest.mark.parametrize("how", ["failing", "stopped"])
+@pytest.mark.parametrize(("seconds", "stale"), [(29, False), (31, True)])
+def test_the_symbol_is_stale_only_after_more_than_30_s_without_a_read(
+    how: str, seconds: float, stale: bool
+) -> None:
+    # An ad may long have ended by the time a blind service is still showing its disc.
+    if how == "failing":
+        snapshot = playing(None, failing_for=seconds)
+    else:
+        snapshot = replace(playing(None), last_read_at=NOW - timedelta(seconds=seconds))
+
+    chosen = select_presentation(snapshot, None, cover(A_URL, stale=True), NOW)
+
+    assert chosen == replace(NO_ARTWORK, stale=stale)
 
 
 def test_presentations_read_plainly_in_the_log() -> None:
@@ -354,6 +404,12 @@ def test_presentations_read_plainly_in_the_log() -> None:
     assert str(PLACEHOLDER) == "placeholder"
     assert str(NO_ARTWORK) == "no_artwork"
     assert str(cover(A_URL)) == f"cover {A_URL}"
+
+
+def test_every_stale_presentation_says_so_in_the_log() -> None:
+    assert str(marked(IDLE)) == "idle (stale)"
+    assert str(marked(PLACEHOLDER)) == "placeholder (stale)"
+    assert str(marked(NO_ARTWORK)) == "no_artwork (stale)"
     assert str(cover(A_URL, stale=True)) == f"cover {A_URL} (stale)"
 
 
@@ -686,6 +742,26 @@ async def test_the_marker_comes_with_failing_reads_and_goes_when_they_recover(
 
     assert board.drawn == ["cover a", "stale cover a", "cover a"]
     assert f"board presentation: cover {A_URL} (stale)" in caplog.text
+
+
+async def test_idle_is_marked_while_blind_and_unmarked_once_reads_recover(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Reads failing after "nothing playing": idle can no longer vouch for it.
+    board = FakeBoard()
+    current = scripted(
+        NOTHING,
+        failing(NOTHING, 29),
+        failing(NOTHING, 31),
+        failing(NOTHING, 40),
+        NOTHING,
+    )
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
+        await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=5))
+
+    assert board.drawn == ["idle", "stale idle", "idle"]
+    assert "board presentation: idle (stale)" in caplog.text
 
 
 async def test_pausing_keeps_the_cover_and_stopping_returns_to_idle() -> None:
