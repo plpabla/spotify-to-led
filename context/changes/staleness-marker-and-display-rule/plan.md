@@ -304,11 +304,11 @@ None. Cached cover frames are unmarked renders and stay valid; the marker is dra
 
 #### Automated
 
-- [x] 2.1 Full suite passes on the Pi: `uv run pytest`
-- [x] 2.2 After the tests, no REJECT rule remains: `sudo iptables -S OUTPUT` lists none
+- [x] 2.1 Full suite passes on the Pi: `uv run pytest` — 1d628e5
+- [x] 2.2 After the tests, no REJECT rule remains: `sudo iptables -S OUTPUT` lists none — 1d628e5
 
 #### Manual
 
-- [x] 2.3 With a cover playing and outbound 443 rejected, the cover gains the marker after about 30 s and loses it after the rule is deleted
-- [x] 2.4 With nothing playing and outbound 443 rejected, idle gains the marker after about 30 s and loses it after the rule is deleted
-- [x] 2.5 The owner reads the marker from across the room over a cover and over idle, lit and dark, recorded in `verification.md` and OQ4
+- [x] 2.3 With a cover playing and outbound 443 rejected, the cover gains the marker after about 30 s and loses it after the rule is deleted — 1d628e5
+- [x] 2.4 With nothing playing and outbound 443 rejected, idle gains the marker after about 30 s and loses it after the rule is deleted — 1d628e5
+- [x] 2.5 The owner reads the marker from across the room over a cover and over idle, lit and dark, recorded in `verification.md` and OQ4 — 1d628e5
