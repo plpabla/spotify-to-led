@@ -17,6 +17,10 @@ cover seen before, even before a restart, is shown without a download. A
 cover is marked once reads have been failing for over 30 s. It pushes again
 whenever that choice changes or the link comes back.
 
+The status page at `/` is static and renders `/status`, which reports the
+believed playback, the authorization and the board link, including the case
+where the display task has ended, so a board fault is explained, not hidden.
+
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
 test suite start the same app the Pi does.
@@ -179,9 +183,9 @@ def _reader(request: Request) -> SpotifyReader | None:
 async def healthz() -> dict[str, str]:
     """Report that the process is serving, and nothing else.
 
-    Link state, the playing item and re-authorization belong to FR-015, which
-    is scheduled for S-07. Keeping them out of here is what lets this route
-    stay truthful while the board is down.
+    Link state, the playing item and re-authorization belong to FR-015's
+    status page and `/status`. Keeping them out of here is what lets this
+    route stay truthful while the board is down.
     """
     return {"status": "ok"}
 
