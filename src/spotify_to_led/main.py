@@ -26,7 +26,9 @@ without a key, no OpenRouter request is made.
 The status page at `/` is static and renders `/status`, which reports the
 believed playback, the authorization and the board link, including the case
 where the display task has ended, so a board fault is explained, not hidden.
-Its one control, the AI-enhanced covers checkbox, writes through
+It also reports what enhancement is doing: whether the current cover is
+enhanced, plain, being generated or plain after a give-up, and until when
+generation is paused after a refusal. Its one control, the AI-enhanced covers checkbox, writes through
 `PUT /settings`, which keeps the owner's choice in `OWNER_SETTINGS_FILE` so it
 survives a restart. A change of it also makes the enhancer forget the images
 it gave up on, so switching off and on is how the owner asks for another try.
@@ -56,8 +58,15 @@ from pydantic import BaseModel, ConfigDict, StrictBool
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.transport import BoardTransport, LinkState
 from spotify_to_led.config import load_settings
-from spotify_to_led.covers import CoverLoader
-from spotify_to_led.display import STALE_AFTER_SECONDS, DisplayStatus, is_stale, run_display
+from spotify_to_led.covers import CoverLoader, CoverStatus
+from spotify_to_led.display import (
+    STALE_AFTER_SECONDS,
+    DisplayStatus,
+    enhancement_source_url,
+    is_stale,
+    run_display,
+    wanted_cover_url,
+)
 from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
@@ -173,8 +182,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Read on every sample, so a change from the page is acted on at once.
         return app.state.owner_settings
 
-    # For `PUT /settings`, which tells it when the switch changes.
+    # For `PUT /settings`, which tells it when the switch changes, and for
+    # `/status`, which reports its pause and, with the loader, the cover's state.
     app.state.enhancer = enhancer
+    app.state.covers = covers
+    app.state.board_size = settings.board_size
     # Started after the reader exists, because `current` closes over it.
     display_status = DisplayStatus()
     task = asyncio.create_task(
@@ -327,7 +339,7 @@ async def status(request: Request) -> dict[str, Any]:
             request.app.state.display_task,
             request.app.state.display_status,
         ),
-        "enhancement": _enhancement_json(request),
+        "enhancement": _enhancement_json(request, snapshot),
         "stale_after_seconds": STALE_AFTER_SECONDS,
         "now": now,
     }
@@ -377,15 +389,77 @@ async def put_settings(request: Request, change: SettingsChange) -> dict[str, bo
     return {"ai_enhanced": updated.ai_enhanced}
 
 
-def _enhancement_json(request: Request) -> dict[str, Any]:
+def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> dict[str, Any]:
     available: bool = request.app.state.enhance_available
     saved: OwnerSettings = request.app.state.owner_settings
+    # A choice saved while a key was configured does not count once the key
+    # is gone: without one the service never enhances.
+    enabled = saved.ai_enhanced and available
+    enhancer: Enhancer | None = request.app.state.enhancer
     return {
         "available": available,
-        # A choice saved while a key was configured does not count once the
-        # key is gone: without one the service never enhances.
-        "enabled": saved.ai_enhanced and available,
+        "enabled": enabled,
+        # Reported switched on or off, cover or none: the pause is about the
+        # key and its credit, and lasts whatever is playing.
+        "paused_until": enhancer.paused_until if enhancer is not None else None,
+        "cover": (
+            _enhanced_cover(
+                snapshot, request.app.state.covers, enhancer, request.app.state.board_size
+            )
+            if enabled
+            else None
+        ),
     }
+
+
+def _enhanced_cover(
+    snapshot: PlaybackSnapshot | None,
+    covers: CoverLoader | None,
+    enhancer: Enhancer | None,
+    size: int,
+) -> str | None:
+    """What enhancement has made of the cover now wanted, for `/status`'s `cover`.
+
+    Read from the loader's state, the same state the display rule chooses
+    from, and never by wanting anything: a poll must not start a download or
+    a generation. One of:
+
+    - `None` when no cover is wanted (nothing playing, an item with no
+      artwork, no loader), or when its plain frame is not on hand yet (the
+      loader `PENDING` or `FAILED`). Then the board shows no form of this
+      cover, and enhancement has not begun, so there is nothing to say yet.
+      Calling a pending cover "plain" would make a new item read plain, then
+      generating, then enhanced, as if it had fallen back first.
+    - `"generating"` while the enhanced frame is made; the board shows the
+      placeholder.
+    - `"enhanced"` when the board's cover is the enhanced frame.
+    - `"gave_up"` for a plain cover whose source image the enhancer gave up
+      on; switching off and on asks again.
+    - `"plain"` for any other plain cover: generation is paused (which
+      `paused_until` explains), the source image could not be downloaded, or
+      a switch just turned on has not reached the display's next sample.
+
+    Only asked when enhancement is enabled, so plain here always means "not
+    enhanced although it was asked to be".
+    """
+    if covers is None:
+        return None
+    # The display's own choice of URL, so this asks about the cover it wants.
+    url = wanted_cover_url(snapshot, size)
+    if url is None:
+        return None
+    state = covers.state(url)
+    if state.status is CoverStatus.GENERATING:
+        return "generating"
+    if state.status is not CoverStatus.READY:
+        return None
+    if state.enhanced:
+        return "enhanced"
+    # The give-up memory is keyed by the image enhanced from, not the URL wanted.
+    source = enhancement_source_url(snapshot)
+    if enhancer is not None and source is not None and enhancer.gave_up(source):
+        return "gave_up"
+    return "plain"
 
 
 def _playback_json(snapshot: PlaybackSnapshot, now: datetime) -> dict[str, Any]:
@@ -423,7 +497,12 @@ def _board_json(
         "link": link,
         "task_running": running,
         "presentation": (
-            {"kind": presentation.kind, "url": presentation.url, "stale": presentation.stale}
+            {
+                "kind": presentation.kind,
+                "url": presentation.url,
+                "stale": presentation.stale,
+                "enhanced": presentation.enhanced,
+            }
             if presentation is not None
             else None
         ),

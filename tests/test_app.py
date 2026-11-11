@@ -9,6 +9,7 @@ its Spotify routes say so. With one, every Spotify request goes to a
 `MockTransport`, so no test reaches the network.
 """
 
+import asyncio
 import json
 import logging
 import threading
@@ -27,10 +28,17 @@ from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.stub import PngBoardTransport
 from spotify_to_led.board.transport import LinkState, frame_to_pixel_colors
 from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
+from spotify_to_led.covers import CoverState, CoverStatus
 from spotify_to_led.enhance import Enhancer
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spotify.auth import AUTHORIZE_URL, SCOPE, TOKEN_URL
-from spotify_to_led.spotify.playback import PlaybackSnapshot, PlaybackStatus, ReadFailure
+from spotify_to_led.spotify.playback import (
+    Artwork,
+    PlaybackSnapshot,
+    PlaybackStatus,
+    PlayingItem,
+    ReadFailure,
+)
 
 # `frames` is imported as a module, not as a symbol: a bare `test_pattern`
 # name in this namespace would be collected as a test case.
@@ -188,6 +196,11 @@ def use_spotify(monkeypatch: pytest.MonkeyPatch, spotify: FakeSpotify) -> None:
 def use_openrouter_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Configure an OpenRouter key, which makes enhancement available."""
     monkeypatch.setenv("OPENROUTER_API_KEY", AN_OPENROUTER_KEY)
+
+
+def idle_enhancement(available: bool, enabled: bool) -> dict[str, object]:
+    """`/status`'s enhancement with no pause and no cover, as it is without Spotify."""
+    return {"available": available, "enabled": enabled, "paused_until": None, "cover": None}
 
 
 def state_of(authorize_response: httpx2.Response) -> str:
@@ -656,11 +669,11 @@ def test_put_settings_saves_and_status_reports_it(
         off = client.put("/settings", json={"ai_enhanced": False})
         disabled = client.get("/status").json()["enhancement"]
 
-    assert before == {"available": True, "enabled": False}
+    assert before == idle_enhancement(True, False)
     assert (on.status_code, on.json()) == (200, {"ai_enhanced": True})
-    assert enabled == {"available": True, "enabled": True}
+    assert enabled == idle_enhancement(True, True)
     assert (off.status_code, off.json()) == (200, {"ai_enhanced": False})
-    assert disabled == {"available": True, "enabled": False}
+    assert disabled == idle_enhancement(True, False)
     saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
     assert saved == {"ai_enhanced": False}
 
@@ -678,7 +691,7 @@ def test_the_saved_choice_survives_a_restart(
     with TestClient(main.app) as client:
         enhancement = client.get("/status").json()["enhancement"]
 
-    assert enhancement == {"available": True, "enabled": True}
+    assert enhancement == idle_enhancement(True, True)
 
 
 @pytest.mark.parametrize(
@@ -746,7 +759,7 @@ def test_without_a_key_turning_enhancement_on_is_a_409_and_changes_nothing(
         off = client.put("/settings", json={"ai_enhanced": False})
 
     assert on.status_code == 409
-    assert enhancement == {"available": False, "enabled": False}
+    assert enhancement == idle_enhancement(False, False)
     assert off.status_code == 200
     saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
     assert saved == {"ai_enhanced": False}
@@ -763,7 +776,7 @@ def test_a_choice_saved_with_a_key_is_not_reported_enabled_once_the_key_is_gone(
     with TestClient(main.app) as client:
         enhancement = client.get("/status").json()["enhancement"]
 
-    assert enhancement == {"available": False, "enabled": False}
+    assert enhancement == idle_enhancement(False, False)
 
 
 def test_an_unreadable_settings_file_starts_with_enhancement_off(
@@ -778,7 +791,7 @@ def test_an_unreadable_settings_file_starts_with_enhancement_off(
         assert client.get("/healthz").status_code == 200
         enhancement = client.get("/status").json()["enhancement"]
 
-    assert enhancement == {"available": True, "enabled": False}
+    assert enhancement == idle_enhancement(True, False)
 
 
 def test_a_failed_save_is_a_500_and_keeps_the_previous_choice(
@@ -797,7 +810,7 @@ def test_a_failed_save_is_a_500_and_keeps_the_previous_choice(
         enhancement = client.get("/status").json()["enhancement"]
 
     assert response.status_code == 500
-    assert enhancement == {"available": True, "enabled": False}
+    assert enhancement == idle_enhancement(True, False)
 
 
 def test_the_openrouter_key_is_in_no_answer(
@@ -813,7 +826,7 @@ def test_the_openrouter_key_is_in_no_answer(
     assert put.status_code == 200
     assert AN_OPENROUTER_KEY not in put.text
     assert AN_OPENROUTER_KEY not in status.text
-    assert set(status.json()["enhancement"]) == {"available", "enabled"}
+    assert set(status.json()["enhancement"]) == {"available", "enabled", "paused_until", "cover"}
 
 
 def test_with_spotify_and_a_key_flipping_the_switch_makes_the_enhancer_forget(
@@ -862,3 +875,227 @@ def test_without_both_spotify_and_a_key_there_is_no_enhancer(
     assert enhancer is None
     # Without an enhancer the display is not even given the switch.
     assert passed["owner_settings"] is None
+
+
+# What `/status` says enhancement made of the current cover. The loader, the
+# reader and the enhancer the route reads are swapped on `app.state` after
+# startup, so each state is set exactly; the display loop keeps its own and
+# never sees them. On the default 32 px board the cover wanted is the smallest
+# image covering it, and the one enhanced from is the widest.
+WIDE_COVER = "https://i.scdn.co/image/wide"
+SMALL_COVER = "https://i.scdn.co/image/small"
+A_FRAME = Image.new("RGB", (32, 32))
+AN_INSTANT = datetime.fromisoformat("2026-11-11T12:00:00+00:00")
+
+
+def playing(
+    *, artwork: bool = True, status: PlaybackStatus = PlaybackStatus.PLAYING
+) -> PlaybackSnapshot:
+    images = (
+        (Artwork(WIDE_COVER, 640, 640), Artwork(SMALL_COVER, 64, 64)) if artwork else ()
+    )
+    return PlaybackSnapshot(
+        status=status,
+        item=PlayingItem(
+            kind="track", id="track-1", name="A Track", subtitle="An Artist", artwork=images
+        ),
+        failure=None,
+        failure_since=None,
+        last_read_at=AN_INSTANT,
+        authorized_at=AN_INSTANT,
+    )
+
+
+class FakeReader:
+    """Just the believed state, which is all `/status` reads of a reader."""
+
+    def __init__(self, snapshot: PlaybackSnapshot) -> None:
+        self.snapshot = snapshot
+
+
+class FakeCoverLoader:
+    """A loader in a fixed state for one URL, pending for any other, as the real one is."""
+
+    def __init__(self, url: str, state: CoverState) -> None:
+        self._url = url
+        self._state = state
+
+    def state(self, url: str) -> CoverState:
+        return self._state if url == self._url else CoverState(CoverStatus.PENDING)
+
+    def want(self, url: str | None, *, enhance_from: str | None = None) -> None:
+        raise AssertionError("/status must never make the loader want anything")
+
+
+def enhancer_after(answer: int | None) -> Enhancer:
+    """A real enhancer at `AN_INSTANT`, after one enhancement of `WIDE_COVER` answered `answer`.
+
+    `None` asks for nothing, so the enhancer is fresh: not paused, given up on nothing.
+    """
+
+    async def run() -> Enhancer:
+        def openrouter(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(answer or 500, json={"error": {"message": "refused"}})
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(openrouter)) as client:
+            enhancer = Enhancer(
+                client, AN_OPENROUTER_KEY, "a-model", 32, clock=lambda: AN_INSTANT
+            )
+            if answer is not None:
+                assert await enhancer.enhance(WIDE_COVER, b"source", "image/png") is None
+        return enhancer
+
+    return asyncio.run(run())
+
+
+def status_with(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    snapshot: PlaybackSnapshot,
+    cover: CoverState,
+    enhancer: Enhancer,
+    switched_on: bool = True,
+) -> httpx2.Response:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        assert client.put("/settings", json={"ai_enhanced": switched_on}).status_code == 200
+        main.app.state.spotify_reader = FakeReader(snapshot)
+        main.app.state.covers = FakeCoverLoader(SMALL_COVER, cover)
+        main.app.state.enhancer = enhancer
+        return client.get("/status")
+
+
+@pytest.mark.parametrize(
+    ("cover", "answer", "expected"),
+    [
+        # The plain frame is not on hand yet: enhancement has not begun.
+        (CoverState(CoverStatus.PENDING), None, None),
+        (CoverState(CoverStatus.FAILED), None, None),
+        (CoverState(CoverStatus.GENERATING), None, "generating"),
+        (CoverState(CoverStatus.READY, A_FRAME, enhanced=True), None, "enhanced"),
+        (CoverState(CoverStatus.READY, A_FRAME), None, "plain"),
+        # A 400 is given up on at once, and the give-up is the source image's.
+        (CoverState(CoverStatus.READY, A_FRAME), 400, "gave_up"),
+    ],
+    ids=["pending", "failed", "generating", "enhanced", "plain", "gave up"],
+)
+def test_status_reports_what_enhancement_made_of_the_current_cover(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cover: CoverState,
+    answer: int | None,
+    expected: str | None,
+) -> None:
+    response = status_with(
+        monkeypatch, tmp_path, snapshot=playing(), cover=cover, enhancer=enhancer_after(answer)
+    )
+
+    assert response.json()["enhancement"] == {
+        "available": True,
+        "enabled": True,
+        "paused_until": None,
+        "cover": expected,
+    }
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        playing(status=PlaybackStatus.NOTHING_PLAYING),
+        # An ad or a local file: the no-artwork disc, nothing to enhance.
+        playing(artwork=False),
+    ],
+    ids=["nothing playing", "no artwork"],
+)
+def test_status_reports_no_cover_when_none_is_wanted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, snapshot: PlaybackSnapshot
+) -> None:
+    response = status_with(
+        monkeypatch,
+        tmp_path,
+        snapshot=snapshot,
+        cover=CoverState(CoverStatus.READY, A_FRAME, enhanced=True),
+        enhancer=enhancer_after(None),
+    )
+
+    assert response.json()["enhancement"]["cover"] is None
+
+
+def test_status_reports_no_cover_with_the_switch_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = status_with(
+        monkeypatch,
+        tmp_path,
+        snapshot=playing(),
+        cover=CoverState(CoverStatus.READY, A_FRAME),
+        enhancer=enhancer_after(None),
+        switched_on=False,
+    )
+
+    assert response.json()["enhancement"]["cover"] is None
+
+
+def test_a_refusal_is_reported_as_a_pause_until_midnight_utc_and_the_cover_as_plain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = status_with(
+        monkeypatch,
+        tmp_path,
+        snapshot=playing(),
+        cover=CoverState(CoverStatus.READY, A_FRAME),
+        enhancer=enhancer_after(402),
+    )
+
+    enhancement = response.json()["enhancement"]
+    assert datetime.fromisoformat(enhancement["paused_until"]) == datetime.fromisoformat(
+        "2026-11-12T00:00:00+00:00"
+    )
+    # Not given up on: the page says plain because of the pause.
+    assert enhancement["cover"] == "plain"
+    assert AN_OPENROUTER_KEY not in response.text
+
+
+def test_the_pause_is_reported_with_the_switch_off_and_nothing_playing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = status_with(
+        monkeypatch,
+        tmp_path,
+        snapshot=playing(status=PlaybackStatus.NOTHING_PLAYING),
+        cover=CoverState(CoverStatus.PENDING),
+        enhancer=enhancer_after(403),
+        switched_on=False,
+    )
+
+    enhancement = response.json()["enhancement"]
+    assert datetime.fromisoformat(enhancement["paused_until"]) == datetime.fromisoformat(
+        "2026-11-12T00:00:00+00:00"
+    )
+    assert enhancement["cover"] is None
+
+
+@pytest.mark.parametrize("enhanced", [True, False])
+def test_status_reports_whether_the_cover_last_sent_was_enhanced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, enhanced: bool
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        # Its own status object: the running loop keeps writing to the real one.
+        main.app.state.display_status = display.DisplayStatus(
+            presentation=display.Presentation(
+                display.PresentationKind.COVER, SMALL_COVER, enhanced=enhanced
+            )
+        )
+        presentation = client.get("/status").json()["board"]["presentation"]
+
+    assert presentation == {
+        "kind": "cover",
+        "url": SMALL_COVER,
+        "stale": False,
+        "enhanced": enhanced,
+    }

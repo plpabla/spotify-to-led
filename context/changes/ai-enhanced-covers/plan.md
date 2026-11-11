@@ -478,18 +478,18 @@ the previous commit. Leftover `.ai.png` files are harmless.
 
 #### Automated
 
-- [x] 3.1 `uv run pytest` passes, with new tests covering the enhanced cache hit, the PENDING/GENERATING/READY sequence, no request after restart, redraw on flip both ways, the retry budget, 400 with no retry, the 402/403 pause until 00:00 UTC, the marker on a stale enhanced cover, and no request with the switch off
-- [x] 3.2 The existing plain-path tests in `test_covers.py`, `test_display.py` and `test_frame_cache.py` pass unmodified
+- [x] 3.1 `uv run pytest` passes, with new tests covering the enhanced cache hit, the PENDING/GENERATING/READY sequence, no request after restart, redraw on flip both ways, the retry budget, 400 with no retry, the 402/403 pause until 00:00 UTC, the marker on a stale enhanced cover, and no request with the switch off — e576b99
+- [x] 3.2 The existing plain-path tests in `test_covers.py`, `test_display.py` and `test_frame_cache.py` pass unmodified — e576b99
 
 #### Manual
 
-- [ ] 3.3 On the laptop with the stub and a real key, a new item shows the placeholder, then the enhanced frame in `var/frames`, and replaying it is instant with no new OpenRouter request in the log
+- [x] 3.3 On the laptop with the stub and a real key, a new item shows the placeholder, then the enhanced frame in `var/frames`, and replaying it is instant with no new OpenRouter request in the log — e576b99
 
 ### Phase 4: Status reporting and Pi rollout
 
 #### Automated
 
-- [ ] 4.1 `uv run pytest` passes, including `/status` tests for each `cover` value and for `paused_until`
+- [x] 4.1 `uv run pytest` passes, including `/status` tests for each `cover` value and for `paused_until`
 - [ ] 4.2 `scripts/deploy.sh` succeeds and `/healthz` answers on the Pi
 
 #### Manual

@@ -27,7 +27,7 @@
   <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
   <section id="reading"><h2>Reading Spotify</h2></section>
   <section id="board"><h2>Board</h2></section>
-  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-note" class="muted"></p></section>
+  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><p id="enhance-note" class="muted"></p></section>
   <section id="authorization" hidden><h2>Spotify authorization</h2></section>
 </div>
 <script>
@@ -135,6 +135,7 @@ function renderBoard(data) {
     parts.push(el("p", "Nothing sent yet.", "muted"));
   } else {
     parts.push(el("p", "Last sent: " + (KINDS[presentation.kind] || presentation.kind)
+      + (presentation.enhanced ? " (AI-enhanced)" : "")
       + (presentation.stale ? ", marked stale." : ", not marked.")));
     if (board.push_failed) parts.push(el("p", "That push failed; it is being retried.", "bad"));
   }
@@ -165,6 +166,28 @@ function renderEnhancement(data, changesAtFetch) {
   } else {
     note.textContent = "";
     note.className = "muted";
+  }
+  document.getElementById("enhance-cover").textContent = enhancementCoverLine(enhancement);
+}
+
+// One line for what enhancement made of the current cover, and the pause,
+// which applies whether or not a cover is on show.
+function enhancementCoverLine(enhancement) {
+  const paused = enhancement.paused_until
+    ? "generation is paused until " + when(enhancement.paused_until) + " (OpenRouter refused the key or its credit)"
+    : null;
+  switch (enhancement.cover) {
+    case "enhanced":
+      return "Current cover: AI-enhanced." + (paused ? " New covers stay plain: " + paused + "." : "");
+    case "generating":
+      return "Current cover: generating the enhanced version; the board shows the placeholder meanwhile.";
+    case "gave_up":
+      return "Current cover: plain, after generating its enhanced version failed. Switch off and on to try again."
+        + (paused ? " Also, " + paused + "." : "");
+    case "plain":
+      return paused ? "Current cover: plain, because " + paused + "." : "Current cover: plain.";
+    default:
+      return paused ? "AI " + paused + "." : "";
   }
 }
 
