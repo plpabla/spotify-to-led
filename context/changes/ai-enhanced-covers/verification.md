@@ -83,3 +83,28 @@ The owner then ran every board check, and reported that all behaved as expected:
 
 Phase 3's own board check (3.3) had already passed on the Pi before this phase: a new album went
 from the placeholder to the enhanced cover, and a replay came from the cache with no new request.
+
+## Deviations from the plan
+
+Decided during implementation or found by the implementation review (`reviews/impl-review.md`).
+Each is tested or documented in the code:
+
+- **The enhanced frame is shrunk with LANCZOS** (`rendering.render_enhanced`), not BOX, as the
+  Phase 1 bake-off chose. `Enhancer` takes the board size so it can return the finished frame.
+- **An enhancer is built only when Spotify is configured as well as `OPENROUTER_API_KEY`**,
+  because it shares the Spotify HTTP client; without Spotify there are no covers to enhance.
+- **The give-up memory is keyed by the source URL** (the item's widest artwork, the image
+  actually sent), while cache entries are keyed by the plain URL. `forget()` (a flip) clears the
+  give-up memory but not the midnight pause.
+- **`/status` `enhancement.cover` is `null` in more cases than the plan said.** It is null when no
+  cover is wanted, but also when the switch is off (or no key), and while the plain cover is
+  still downloading or failing. Otherwise a new item would read "plain", then "generating", as if
+  it had fallen back first.
+- **A failed download of the 640 px source falls back to the plain cover without a retry.** It
+  is tried again the next time the cover is wanted enhanced.
+- **Each retry logs its own INFO line.** The outcome (success, give-up, pause) is still one line.
+- **The flip-redraw integration test is in `tests/test_display.py`**, with a real `CoverLoader`
+  and a scripted network, not in `tests/test_app.py` as the Testing Strategy said.
+- **Review fixes, after Phase 4:** an unexpected error in a generation now gives up on the image
+  instead of killing the loader task. A damaged PNG answer and an undecodable body count as
+  failures. Decoding and shrinking run in a worker thread.

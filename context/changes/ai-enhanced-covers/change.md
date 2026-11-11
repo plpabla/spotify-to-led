@@ -1,7 +1,7 @@
 ---
 change_id: ai-enhanced-covers
 title: AI-enhanced covers made for the 32x32 panel (roadmap S-08)
-status: implemented
+status: impl_reviewed
 created: 2026-11-11
 updated: 2026-11-11
 archived_at: null

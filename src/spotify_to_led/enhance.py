@@ -172,6 +172,10 @@ async def generate(
         # The cause is kept for the traceback: a transport error's message is
         # about the connection, and the request headers are not part of it.
         raise EnhanceRetryable(f"{type(error).__name__}: {error}") from error
+    except httpx2.RequestError as error:
+        # The rest arrive with an answer in hand: a body that does not decode,
+        # or redirects without end. Asking again would get the same.
+        raise EnhanceFailed(f"{type(error).__name__}: {error}") from error
 
     status = response.status_code
     if not response.is_success:
@@ -191,7 +195,10 @@ async def generate(
         raise EnhanceFailed("body is not JSON") from None
     if not isinstance(payload, dict):
         raise EnhanceFailed("no image in the answer")
-    return GeneratedImage(_decode_image(payload), _cost(payload))
+    # Decoding a 1024 px PNG takes a noticeable slice of a Pi's CPU; off the
+    # event loop, it cannot hold up the display, the board link or /status.
+    image = await asyncio.to_thread(_decode_image, payload)
+    return GeneratedImage(image, _cost(payload))
 
 
 def _decode_image(payload: dict[str, Any]) -> Image.Image:
@@ -213,7 +220,9 @@ def _decode_image(payload: dict[str, Any]) -> Image.Image:
         # `open` reads only the header; `load` decodes the rest, so a
         # truncated image fails here rather than in the caller's downscale.
         image.load()
-    except (OSError, Image.DecompressionBombError) as error:
+    # Pillow reports a damaged PNG chunk as SyntaxError or ValueError, not
+    # OSError; `FrameCache.load` catches the same set for the same reason.
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as error:
         raise EnhanceFailed(f"image does not decode ({type(error).__name__})") from None
     return image
 
@@ -350,9 +359,19 @@ class Enhancer:
                     "enhancing %s failed (%s); retrying in %s s", url, error, delay
                 )
                 await self._sleep(delay)
+            except Exception:
+                # A bug, or an error nothing above anticipated: give up on the
+                # image like a failure, so it is not paid for again, and let
+                # the loader show the plain cover instead of dying mid-way.
+                self._gave_up.add(url)
+                logger.exception(
+                    "enhancing %s failed unexpectedly; showing the plain cover", url
+                )
+                return None
             else:
                 cost = f"${generated.cost:.4f}" if generated.cost is not None else "not reported"
                 logger.info("cover enhanced: %s (cost %s)", url, cost)
-                return render_enhanced(generated.image, self._size)
+                # Off the event loop for the same reason as the decode.
+                return await asyncio.to_thread(render_enhanced, generated.image, self._size)
         # The loop returns on its last attempt whatever the outcome.
         raise AssertionError("unreachable")

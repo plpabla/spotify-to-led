@@ -54,6 +54,19 @@ def _png(size: int = 64) -> bytes:
     return buffer.getvalue()
 
 
+def _png_with_a_damaged_chunk() -> bytes:
+    """A PNG whose second IDAT chunk has a broken type, which Pillow reports as SyntaxError."""
+    buffer = BytesIO()
+    # Noise does not compress, so the data spans several IDAT chunks.
+    Image.effect_noise((256, 256), 60).convert("RGB").save(
+        buffer, format="PNG", compress_level=0
+    )
+    data = bytearray(buffer.getvalue())
+    second = data.index(b"IDAT", data.index(b"IDAT") + 4)
+    data[second + 1 : second + 2] = b"#"
+    return bytes(data)
+
+
 def an_answer(body: object, status: int = 200) -> httpx2.Response:
     return httpx2.Response(status, json=body)
 
@@ -225,6 +238,9 @@ async def test_a_long_provider_message_is_cut_short() -> None:
         an_answer({"data": [{"b64_json": "not base64 at all!"}]}),
         an_answer({"data": [{"b64_json": base64.b64encode(b"not an image").decode()}]}),
         an_answer({"data": [{"b64_json": base64.b64encode(_png()[:60]).decode()}]}),
+        an_answer(
+            {"data": [{"b64_json": base64.b64encode(_png_with_a_damaged_chunk()).decode()}]}
+        ),
     ],
     ids=[
         "not json",
@@ -235,11 +251,20 @@ async def test_a_long_provider_message_is_cut_short() -> None:
         "bad base64",
         "not an image",
         "truncated image",
+        "damaged chunk",
     ],
 )
 async def test_an_answer_without_a_decodable_image_failed(answer: httpx2.Response) -> None:
     with pytest.raises(EnhanceFailed):
         await call(OpenRouter(answer))
+
+
+async def test_an_answer_whose_body_does_not_decode_failed() -> None:
+    async def undecodable(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.DecodingError("broken gzip body")
+
+    with pytest.raises(EnhanceFailed):
+        await call(OpenRouter(undecodable))
 
 
 @pytest.mark.parametrize("limit", ["MAX_RESPONSE_BYTES", "MAX_IMAGE_PIXELS"])
@@ -434,6 +459,26 @@ async def test_a_rejected_request_is_given_up_on_without_a_retry(
     assert sleep.durations == []
     assert enhancer.gave_up(A_COVER_URL)
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+
+async def test_an_unexpected_error_gives_up_on_the_image_instead_of_escaping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def broken_generate(*args: object, **kwargs: object) -> enhance.GeneratedImage:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("a bug nothing anticipated")
+
+    monkeypatch.setattr(enhance, "generate", broken_generate)
+    enhancer = an_enhancer(ScriptedOpenRouter([]), RecordingSleep())
+
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert enhancer.gave_up(A_COVER_URL)
+    # Wanted again, it is not paid for again.
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert calls == 1
 
 
 @pytest.mark.parametrize("status", [402, 403])
