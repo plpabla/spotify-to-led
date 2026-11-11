@@ -28,6 +28,7 @@ SETTING_KEYS = (
     "COVER_CACHE_DIR",
     "OPENROUTER_API_KEY",
     "OPENROUTER_MODEL",
+    "OWNER_SETTINGS_FILE",
     ENV_FILE_VARIABLE,
 )
 
@@ -274,3 +275,21 @@ def test_the_openrouter_model_is_read_from_the_environment(
     monkeypatch.setenv("OPENROUTER_MODEL", "qwen/qwen-image-2.1-pro")
 
     assert Settings(_env_file=None).openrouter_model == "qwen/qwen-image-2.1-pro"
+
+
+def test_without_an_openrouter_key_enhancement_is_unavailable(clean_env: None) -> None:
+    assert not Settings(_env_file=None).enhance_available
+
+
+def test_an_openrouter_key_makes_enhancement_available(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", AN_OPENROUTER_KEY)
+
+    assert Settings(_env_file=None).enhance_available
+
+
+def test_the_owner_settings_file_defaults_to_the_checkout_var_directory(
+    clean_env: None,
+) -> None:
+    assert Settings(_env_file=None).owner_settings_file == Path("var/settings.json")

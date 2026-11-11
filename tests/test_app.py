@@ -9,6 +9,7 @@ its Spotify routes say so. With one, every Spotify request goes to a
 `MockTransport`, so no test reaches the network.
 """
 
+import json
 import logging
 import threading
 import time
@@ -26,6 +27,7 @@ from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.stub import PngBoardTransport
 from spotify_to_led.board.transport import LinkState, frame_to_pixel_colors
 from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
+from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spotify.auth import AUTHORIZE_URL, SCOPE, TOKEN_URL
 from spotify_to_led.spotify.playback import PlaybackSnapshot, PlaybackStatus, ReadFailure
 
@@ -38,6 +40,7 @@ A_REDIRECT_URI = "https://led.example.com/callback"
 A_CODE = "AQD-the-authorization-code"
 AN_ACCESS_TOKEN = "BQ-the-access-token"
 A_REFRESH_TOKEN = "AQ-the-refresh-token"
+AN_OPENROUTER_KEY = "sk-or-v1-the-openrouter-key"
 
 
 class CountingTransport:
@@ -120,6 +123,10 @@ def use_transport(
     monkeypatch.setenv("SPOTIFY_CLIENT_ID", "")
     monkeypatch.setenv("SPOTIFY_TOKEN_FILE", str(tmp_path / "var" / "spotify-token.json"))
     monkeypatch.setenv("COVER_CACHE_DIR", str(tmp_path / "var" / "covers"))
+    monkeypatch.setenv("OWNER_SETTINGS_FILE", str(tmp_path / "var" / "settings.json"))
+    # Like the client ID: a developer's real key in `.env` must not make
+    # enhancement available; `use_openrouter_key` does that explicitly.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
     monkeypatch.setattr(main, "create_transport", lambda settings: transport)
 
 
@@ -175,6 +182,11 @@ def use_spotify(monkeypatch: pytest.MonkeyPatch, spotify: FakeSpotify) -> None:
         "create_spotify_client",
         lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(spotify)),
     )
+
+
+def use_openrouter_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure an OpenRouter key, which makes enhancement available."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", AN_OPENROUTER_KEY)
 
 
 def state_of(authorize_response: httpx2.Response) -> str:
@@ -357,6 +369,7 @@ def test_the_status_page_is_served_and_renders_status_without_innerhtml(
     # The calls themselves, not a mention of the paths in a comment.
     assert 'fetch("/status"' in response.text
     assert 'link.href = "/authorize"' in response.text
+    assert 'fetch("/settings"' in response.text
     # A cheap guard on the rule that Spotify's text goes in as text: item
     # names are attacker-influenceable, anyone can name a podcast episode.
     assert "innerHTML" not in response.text
@@ -520,6 +533,7 @@ def test_authorize_callback_and_status_end_to_end_with_no_token_in_any_answer(
         "playback",
         "authorization",
         "board",
+        "enhancement",
         "stale_after_seconds",
         "now",
     }
@@ -626,3 +640,176 @@ def test_the_factory_wires_the_idotmatrix_adapter_without_touching_bluetooth() -
     # Nothing connected, scanned or awaited: the link is only reported up once
     # the library's own connection listener fires.
     assert transport.link_state is LinkState.DOWN
+
+
+def test_put_settings_saves_and_status_reports_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        before = client.get("/status").json()["enhancement"]
+        on = client.put("/settings", json={"ai_enhanced": True})
+        enabled = client.get("/status").json()["enhancement"]
+        off = client.put("/settings", json={"ai_enhanced": False})
+        disabled = client.get("/status").json()["enhancement"]
+
+    assert before == {"available": True, "enabled": False}
+    assert (on.status_code, on.json()) == (200, {"ai_enhanced": True})
+    assert enabled == {"available": True, "enabled": True}
+    assert (off.status_code, off.json()) == (200, {"ai_enhanced": False})
+    assert disabled == {"available": True, "enabled": False}
+    saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
+    assert saved == {"ai_enhanced": False}
+
+
+def test_the_saved_choice_survives_a_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        assert client.put("/settings", json={"ai_enhanced": True}).status_code == 200
+
+    # A second lifespan on the same file, as a pm2 restart would be.
+    with TestClient(main.app) as client:
+        enhancement = client.get("/status").json()["enhancement"]
+
+    assert enhancement == {"available": True, "enabled": True}
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body"),
+    [
+        # Valid JSON under a type a cross-site page may send with no preflight.
+        ("text/plain", '{"ai_enhanced": true}'),
+        ("text/plain;charset=UTF-8", '{"ai_enhanced": true}'),
+        ("application/x-www-form-urlencoded", "ai_enhanced=true"),
+        # A body with no type at all, as a cross-site `fetch` of a Blob sends.
+        (None, '{"ai_enhanced": true}'),
+    ],
+)
+def test_put_settings_refuses_a_body_that_is_not_json_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content_type: str | None, body: str
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+    headers = {"content-type": content_type} if content_type is not None else {}
+
+    with TestClient(main.app) as client:
+        response = client.put("/settings", content=body.encode(), headers=headers)
+        enhancement = client.get("/status").json()["enhancement"]
+
+    assert 400 <= response.status_code < 500
+    assert enhancement["enabled"] is False
+    assert not (tmp_path / "var" / "settings.json").exists()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"ai_enhanced": "true"},
+        {"ai_enhanced": 1},
+        {"ai_enhanced": None},
+        {"ai_enhanced": True, "something_else": 1},
+        [True],
+    ],
+)
+def test_put_settings_refuses_a_body_of_the_wrong_shape_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, body: object
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        response = client.put("/settings", json=body)
+        enhancement = client.get("/status").json()["enhancement"]
+
+    assert 400 <= response.status_code < 500
+    assert enhancement["enabled"] is False
+    assert not (tmp_path / "var" / "settings.json").exists()
+
+
+def test_without_a_key_turning_enhancement_on_is_a_409_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        on = client.put("/settings", json={"ai_enhanced": True})
+        enhancement = client.get("/status").json()["enhancement"]
+        # Off is always allowed: it is the state without a key anyway.
+        off = client.put("/settings", json={"ai_enhanced": False})
+
+    assert on.status_code == 409
+    assert enhancement == {"available": False, "enabled": False}
+    assert off.status_code == 200
+    saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
+    assert saved == {"ai_enhanced": False}
+
+
+def test_a_choice_saved_with_a_key_is_not_reported_enabled_once_the_key_is_gone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Without a key the service never enhances, whatever the file says.
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "settings.json").write_text('{"ai_enhanced": true}', encoding="utf-8")
+
+    with TestClient(main.app) as client:
+        enhancement = client.get("/status").json()["enhancement"]
+
+    assert enhancement == {"available": False, "enabled": False}
+
+
+def test_an_unreadable_settings_file_starts_with_enhancement_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "settings.json").write_text("{not json", encoding="utf-8")
+
+    with TestClient(main.app) as client:
+        assert client.get("/healthz").status_code == 200
+        enhancement = client.get("/status").json()["enhancement"]
+
+    assert enhancement == {"available": True, "enabled": False}
+
+
+def test_a_failed_save_is_a_500_and_keeps_the_previous_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    def failing_save(self: OwnerSettingsStore, settings: OwnerSettings) -> None:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(OwnerSettingsStore, "save", failing_save)
+
+    with TestClient(main.app) as client:
+        response = client.put("/settings", json={"ai_enhanced": True})
+        enhancement = client.get("/status").json()["enhancement"]
+
+    assert response.status_code == 500
+    assert enhancement == {"available": True, "enabled": False}
+
+
+def test_the_openrouter_key_is_in_no_answer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        put = client.put("/settings", json={"ai_enhanced": True})
+        status = client.get("/status")
+
+    assert put.status_code == 200
+    assert AN_OPENROUTER_KEY not in put.text
+    assert AN_OPENROUTER_KEY not in status.text
+    assert set(status.json()["enhancement"]) == {"available", "enabled"}

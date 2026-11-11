@@ -62,11 +62,19 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = None
     # About $0.009 an image, and the model the proof of concept was judged on.
     openrouter_model: str = "black-forest-labs/flux-3-image-klein"
+    # The owner's choices from the status page, rewritten whenever one changes,
+    # so like the token file it is runtime state kept apart from the env file.
+    owner_settings_file: Path = Path("var/settings.json")
 
     @property
     def spotify_enabled(self) -> bool:
         """Whether a Spotify client ID is configured, and so a reader should run."""
         return self.spotify_client_id is not None
+
+    @property
+    def enhance_available(self) -> bool:
+        """Whether AI enhancement can be offered at all, which needs an OpenRouter key."""
+        return self.openrouter_api_key is not None
 
     @field_validator("spotify_client_id")
     @classmethod

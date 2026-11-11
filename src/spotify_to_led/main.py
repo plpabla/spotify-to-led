@@ -20,6 +20,9 @@ whenever that choice changes or the link comes back.
 The status page at `/` is static and renders `/status`, which reports the
 believed playback, the authorization and the board link, including the case
 where the display task has ended, so a board fault is explained, not hidden.
+Its one control, the AI-enhanced covers checkbox, writes through
+`PUT /settings`, which keeps the owner's choice in `OWNER_SETTINGS_FILE` so it
+survives a restart.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
@@ -41,6 +44,7 @@ import httpx2
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from pydantic import BaseModel, ConfigDict, StrictBool
 
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.transport import BoardTransport, LinkState
@@ -48,6 +52,7 @@ from spotify_to_led.config import load_settings
 from spotify_to_led.covers import CoverLoader
 from spotify_to_led.display import STALE_AFTER_SECONDS, DisplayStatus, is_stale, run_display
 from spotify_to_led.frame_cache import FrameCache
+from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
 from spotify_to_led.spotify.reader import AuthorizationStateMismatch, SpotifyReader
@@ -115,6 +120,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = load_settings()
     configure_logging(settings.log_level)
     transport = create_transport(settings)
+    # A broken file loads as the defaults, so this cannot stop the service.
+    owner_settings_store = OwnerSettingsStore(settings.owner_settings_file)
+    app.state.owner_settings_store = owner_settings_store
+    app.state.owner_settings = owner_settings_store.load()
+    app.state.enhance_available = settings.enhance_available
 
     spotify_client: httpx2.AsyncClient | None = None
     reader: SpotifyReader | None = None
@@ -269,7 +279,7 @@ async def status(request: Request) -> dict[str, Any]:
     The fields are named one by one rather than dumped from the reader or the
     loop, so no token can reach this response by a field added elsewhere.
     `playback` and `authorization` are `null` when Spotify is not configured;
-    the board is reported either way.
+    the board and enhancement are reported either way.
     """
     reader = _reader(request)
     snapshot = reader.snapshot if reader is not None else None
@@ -284,8 +294,59 @@ async def status(request: Request) -> dict[str, Any]:
             request.app.state.display_task,
             request.app.state.display_status,
         ),
+        "enhancement": _enhancement_json(request),
         "stale_after_seconds": STALE_AFTER_SECONDS,
         "now": now,
+    }
+
+
+class SettingsChange(BaseModel):
+    """The body of `PUT /settings`: exactly one strict boolean, nothing else."""
+
+    # A misspelt field is refused rather than silently dropped, and
+    # `StrictBool` refuses `"false"` or `0` rather than coercing them.
+    model_config = ConfigDict(extra="forbid")
+
+    ai_enhanced: StrictBool
+
+
+@app.put("/settings", response_model=None)
+async def put_settings(request: Request, change: SettingsChange) -> dict[str, bool] | Response:
+    """Save the owner's choices and answer with what was saved.
+
+    Ungated like every route: the only gate is Cloudflare Access at the edge.
+    A cross-site page can still post here without a CORS preflight if it
+    sends `text/plain` or a form, and this route will spend money, so only an
+    `application/json` body is accepted. FastAPI's default strict content
+    type already refuses any other body, or one with no content type, with a
+    422 before this runs; `tests/test_app.py` holds it to that.
+    """
+    if change.ai_enhanced and not request.app.state.enhance_available:
+        return PlainTextResponse(
+            "AI-enhanced covers need an OpenRouter key (OPENROUTER_API_KEY), "
+            "and none is configured.",
+            status_code=409,
+        )
+    updated = OwnerSettings(ai_enhanced=change.ai_enhanced)
+    try:
+        request.app.state.owner_settings_store.save(updated)
+    except OSError as failure:
+        # The in-memory choice follows the file, never runs ahead of it, so a
+        # restart cannot quietly undo what the page showed as saved.
+        logger.warning("saving the owner settings failed (%s)", type(failure).__name__)
+        return PlainTextResponse("The setting could not be saved.", status_code=500)
+    request.app.state.owner_settings = updated
+    return {"ai_enhanced": updated.ai_enhanced}
+
+
+def _enhancement_json(request: Request) -> dict[str, Any]:
+    available: bool = request.app.state.enhance_available
+    saved: OwnerSettings = request.app.state.owner_settings
+    return {
+        "available": available,
+        # A choice saved while a key was configured does not count once the
+        # key is gone: without one the service never enhances.
+        "enabled": saved.ai_enhanced and available,
     }
 
 

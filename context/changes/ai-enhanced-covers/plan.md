@@ -454,25 +454,25 @@ the previous commit. Leftover `.ai.png` files are harmless.
 
 #### Automated
 
-- [x] 1.1 `uv run pytest tests/test_enhance.py` passes (request shape, data URL, error classification, key absent from errors)
-- [x] 1.2 `uv run pytest` passes with no other test changed
-- [x] 1.3 `uv run python scripts/cover_bakeoff.py --enhance <url>` writes a contact sheet with plain, enhanced-BOX and enhanced-LANCZOS columns against the stub
+- [x] 1.1 `uv run pytest tests/test_enhance.py` passes (request shape, data URL, error classification, key absent from errors) — 1bca187
+- [x] 1.2 `uv run pytest` passes with no other test changed — 1bca187
+- [x] 1.3 `uv run python scripts/cover_bakeoff.py --enhance <url>` writes a contact sheet with plain, enhanced-BOX and enhanced-LANCZOS columns against the stub — 1bca187
 
 #### Manual
 
-- [x] 1.4 On the Pi with the service stopped, the owner judges 6–10 varied covers plain vs enhanced from desk distance and records the verdict and the downscale choice
-- [x] 1.5 Generation wall time and cost per call are recorded for at least 5 calls from the Pi
-- [x] 1.6 PRD (FR-019, Non-Goal, NFR-01 note), `CLAUDE.md`, roadmap (M-1 closed, M-2 open), `tech-stack.md` and `infrastructure.md` are revised, or the change is stopped with the negative verdict recorded
+- [x] 1.4 On the Pi with the service stopped, the owner judges 6–10 varied covers plain vs enhanced from desk distance and records the verdict and the downscale choice — 1bca187
+- [x] 1.5 Generation wall time and cost per call are recorded for at least 5 calls from the Pi — 1bca187
+- [x] 1.6 PRD (FR-019, Non-Goal, NFR-01 note), `CLAUDE.md`, roadmap (M-1 closed, M-2 open), `tech-stack.md` and `infrastructure.md` are revised, or the change is stopped with the negative verdict recorded — 1bca187
 
 ### Phase 2: Saved toggle and settings
 
 #### Automated
 
-- [ ] 2.1 `uv run pytest` passes, including new tests for: store round-trip, unreadable/missing file means defaults, PUT saves and `/status` reflects it, `text/plain` body rejected with no change, 409 without a key, the key never present in `/status`
+- [x] 2.1 `uv run pytest` passes, including new tests for: store round-trip, unreadable/missing file means defaults, PUT saves and `/status` reflects it, `text/plain` body rejected with no change, 409 without a key, the key never present in `/status`
 
 #### Manual
 
-- [ ] 2.2 On the laptop, ticking the checkbox survives a service restart, and with no key the checkbox is disabled with its reason shown
+- [x] 2.2 On the laptop, ticking the checkbox survives a service restart, and with no key the checkbox is disabled with its reason shown
 
 ### Phase 3: Enhanced covers end to end
 
