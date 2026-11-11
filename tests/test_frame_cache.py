@@ -180,3 +180,87 @@ def test_a_store_into_an_unusable_root_is_logged_and_survived(
     assert error.levelno == logging.ERROR
     assert str(root) in error.getMessage()
     assert cache.load(A_URL) is None
+
+
+# --- enhanced frames ------------------------------------------------------
+
+
+def an_enhanced_frame() -> Image.Image:
+    return Image.new("RGB", (SIZE, SIZE), (250, 250, 0))
+
+
+def test_an_enhanced_frame_is_kept_beside_the_plain_one_and_loads_back(tmp_path: Path) -> None:
+    cache = FrameCache(tmp_path, SIZE)
+
+    cache.store(A_URL, an_enhanced_frame(), enhanced=True)
+    loaded = cache.load(A_URL, enhanced=True)
+
+    assert loaded is not None
+    assert frame_to_pixel_colors(loaded) == frame_to_pixel_colors(an_enhanced_frame())
+    assert [p.name for p in (tmp_path / "32").iterdir()] == [f"{AN_ID}.ai.png"]
+
+
+def test_the_plain_and_enhanced_entries_of_an_image_are_independent(tmp_path: Path) -> None:
+    cache = FrameCache(tmp_path, SIZE)
+
+    cache.store(A_URL, a_frame())
+    # Only the plain one so far: the enhanced one is a miss, not the plain frame.
+    assert cache.load(A_URL, enhanced=True) is None
+
+    cache.store(A_URL, an_enhanced_frame(), enhanced=True)
+    plain = cache.load(A_URL)
+    enhanced = cache.load(A_URL, enhanced=True)
+
+    assert plain is not None and enhanced is not None
+    assert frame_to_pixel_colors(plain) == frame_to_pixel_colors(a_frame())
+    assert frame_to_pixel_colors(enhanced) == frame_to_pixel_colors(an_enhanced_frame())
+    assert sorted(p.name for p in (tmp_path / "32").iterdir()) == [
+        f"{AN_ID}.ai.png",
+        f"{AN_ID}.png",
+    ]
+
+
+def test_an_existing_plain_entry_is_read_as_the_plain_frame_unchanged(tmp_path: Path) -> None:
+    # Written as the cache did before enhanced frames existed.
+    entry = tmp_path / "32" / f"{AN_ID}.png"
+    entry.parent.mkdir()
+    a_frame().save(entry, format="PNG")
+
+    cache = FrameCache(tmp_path, SIZE)
+
+    loaded = cache.load(A_URL)
+    assert loaded is not None
+    assert frame_to_pixel_colors(loaded) == frame_to_pixel_colors(a_frame())
+    assert cache.load(A_URL, enhanced=True) is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://i.scdn.co/image/cover-a",
+        "https://i.scdn.co/image/..",
+        "https://i.scdn.co/image/ab67616d00004851aaaa.ai",
+        "https://i.scdn.co/image/ab67616d00004851aaaa/../x",
+    ],
+)
+def test_a_url_without_an_id_has_no_enhanced_entry_either(tmp_path: Path, url: str) -> None:
+    cache = FrameCache(tmp_path, SIZE)
+
+    cache.store(url, an_enhanced_frame(), enhanced=True)
+
+    assert cache.load(url, enhanced=True) is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_store_sweeps_only_its_own_kinds_leftover_temp_files(tmp_path: Path) -> None:
+    directory = tmp_path / "32"
+    directory.mkdir()
+    plain_leftover = directory / f".{AN_ID}.png.dead.tmp"
+    plain_leftover.write_bytes(b"half a png")
+    (directory / f".{AN_ID}.ai.png.dead.tmp").write_bytes(b"half an enhanced png")
+
+    FrameCache(tmp_path, SIZE).store(A_URL, an_enhanced_frame(), enhanced=True)
+
+    assert sorted(p.name for p in directory.iterdir()) == sorted(
+        [f"{AN_ID}.ai.png", plain_leftover.name]
+    )

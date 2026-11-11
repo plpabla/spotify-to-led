@@ -29,17 +29,44 @@ messages carry the status and a short, truncated piece of the provider's
 error text, which is what makes a log line useful, but never the key or the
 request headers; the provider text is scrubbed of the key as well, in case an
 error ever echoes it back.
+
+`Enhancer` wraps `generate` in the policy FR-019 sets, and is what the cover
+loader calls. It hands back a finished board frame, shrunk with
+`render_enhanced`, or `None`, which means "show the plain cover":
+
+- An image gets at most `ENHANCE_ATTEMPTS` calls, waiting 5 s and then 10 s
+  between them, and only after `EnhanceRetryable`. A call is cut off after
+  90 s; on the Pi a generation took about 9 s, 20 s at worst.
+- `EnhanceFailed`, or running out of attempts, means the enhancer gives up on
+  that image. It remembers so in memory, and asks for it again only after
+  `forget()`, which the owner's switch calls whenever it changes, or after a
+  restart. Without that memory every sighting of a cover the model cannot
+  draw would cost three more calls.
+- `EnhanceRefused` pauses every generation, for every image, until the next
+  00:00 UTC, which is when a daily key limit resets. A key that is simply
+  wrong is refused the same way, and asked again once a day.
+
+Each image's outcome is logged once, naming the image's URL: INFO with the
+cost on success, a WARNING when the enhancer gives up or pauses. A retry is an
+INFO line of its own. The key is in none of them.
 """
 
 import asyncio
 import base64
 import binascii
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
 from io import BytesIO
 from typing import Any
 
 import httpx2
 from PIL import Image
+
+from spotify_to_led.rendering import render_enhanced
+
+logger = logging.getLogger(__name__)
 
 API_URL = "https://openrouter.ai/api/v1/images"
 
@@ -69,6 +96,17 @@ MAX_DETAIL_CHARS = 200
 
 REFUSED_STATUSES = frozenset({401, 402, 403})
 RETRYABLE_STATUSES = frozenset({408, 429})
+
+# The Enhancer's policy (FR-019). The timeout leaves ample room over the
+# calls measured on the Pi in the board bake-off, about 9 s and 20 s at worst.
+ENHANCE_TIMEOUT_SECONDS = 90.0
+ENHANCE_ATTEMPTS = 3
+# The wait after each failed attempt but the last: the start of the cover
+# retry's doubling, cut short, since every attempt here is paid for.
+ENHANCE_RETRY_DELAYS: tuple[float, ...] = (5.0, 10.0)
+
+Clock = Callable[[], datetime]
+Sleep = Callable[[float], Awaitable[None]]
 
 
 class EnhanceError(Exception):
@@ -206,3 +244,115 @@ def _error_detail(response: httpx2.Response, api_key: str) -> str:
     if len(detail) > MAX_DETAIL_CHARS:
         detail = detail[:MAX_DETAIL_CHARS] + "..."
     return detail
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def next_utc_midnight(now: datetime) -> datetime:
+    """The first 00:00 UTC strictly after `now`, when a daily key limit resets."""
+    tomorrow = now.astimezone(UTC).date() + timedelta(days=1)
+    return datetime.combine(tomorrow, time(0, 0), tzinfo=UTC)
+
+
+class Enhancer:
+    """Turns a cover into an enhanced board frame, within FR-019's retry and pause policy.
+
+    One enhancer serves the whole process, so that its memory of the images it
+    gave up on, and its pause, apply to every cover. It is used by the cover
+    loader's one task at a time.
+    """
+
+    def __init__(
+        self,
+        client: httpx2.AsyncClient,
+        api_key: str,
+        model: str,
+        size: int,
+        *,
+        clock: Clock = _utc_now,
+        sleep: Sleep = asyncio.sleep,
+    ) -> None:
+        self._client = client
+        self._api_key = api_key
+        self._model = model
+        self._size = size
+        self._clock = clock
+        self._sleep = sleep
+        self._paused_until: datetime | None = None
+        self._gave_up: set[str] = set()
+
+    @property
+    def paused_until(self) -> datetime | None:
+        """When generation may start again after a refusal, or `None` when it is not paused."""
+        if self._paused_until is not None and self._clock() < self._paused_until:
+            return self._paused_until
+        return None
+
+    def gave_up(self, url: str) -> bool:
+        """Whether the image at `url` failed for good since the last `forget()`."""
+        return url in self._gave_up
+
+    def forget(self) -> None:
+        """Forget every image given up on, so each is tried again when next wanted.
+
+        The pause stays: it is about the key and its credit, not the images.
+        """
+        self._gave_up.clear()
+
+    async def enhance(self, url: str, source: bytes, mime: str) -> Image.Image | None:
+        """Return `source`, the image at `url` of type `mime`, as an enhanced board frame.
+
+        `None` means the plain cover is to be shown instead: generation is
+        paused, the image was given up on before, or it is given up on now.
+        Makes no request in the first two cases.
+        """
+        if self.paused_until is not None or self.gave_up(url):
+            return None
+        for attempt in range(1, ENHANCE_ATTEMPTS + 1):
+            try:
+                generated = await generate(
+                    self._client,
+                    self._api_key,
+                    self._model,
+                    source,
+                    mime,
+                    timeout=ENHANCE_TIMEOUT_SECONDS,
+                )
+            except EnhanceRefused as error:
+                self._paused_until = next_utc_midnight(self._clock())
+                logger.warning(
+                    "enhancing %s was refused (%s); pausing all generation until %s",
+                    url,
+                    error,
+                    self._paused_until.isoformat(),
+                )
+                return None
+            except EnhanceFailed as error:
+                self._gave_up.add(url)
+                logger.warning(
+                    "enhancing %s failed (%s); showing the plain cover", url, error
+                )
+                return None
+            except EnhanceRetryable as error:
+                if attempt == ENHANCE_ATTEMPTS:
+                    self._gave_up.add(url)
+                    logger.warning(
+                        "enhancing %s failed %s times, the last with %s; showing the plain cover",
+                        url,
+                        attempt,
+                        error,
+                    )
+                    return None
+                delay = ENHANCE_RETRY_DELAYS[attempt - 1]
+                logger.info(
+                    "enhancing %s failed (%s); retrying in %s s", url, error, delay
+                )
+                await self._sleep(delay)
+            else:
+                cost = f"${generated.cost:.4f}" if generated.cost is not None else "not reported"
+                logger.info("cover enhanced: %s (cost %s)", url, cost)
+                return render_enhanced(generated.image, self._size)
+        # The loop returns on its last attempt whatever the outcome.
+        raise AssertionError("unreachable")

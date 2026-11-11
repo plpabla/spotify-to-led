@@ -5,7 +5,7 @@ from PIL import Image
 
 from spotify_to_led.board.transport import validate_frame
 from spotify_to_led.config import SUPPORTED_BOARD_SIZES
-from spotify_to_led.rendering import render_cover
+from spotify_to_led.rendering import render_cover, render_enhanced
 
 
 def _gradient(width: int, height: int) -> Image.Image:
@@ -81,3 +81,23 @@ def test_the_cover_is_averaged_by_area() -> None:
     frame = render_cover(source, 16)
 
     assert all(120 <= channel <= 135 for channel in frame.getpixel((8, 8)))
+
+
+@pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
+@pytest.mark.parametrize("source_name", tuple(SOURCES))
+def test_every_source_renders_to_a_valid_enhanced_frame(size: int, source_name: str) -> None:
+    frame = render_enhanced(SOURCES[source_name], size)
+
+    validate_frame(frame, size)
+
+
+def test_an_enhanced_frame_is_the_same_square_shrunk_with_lanczos() -> None:
+    # Same crop and compositing as a plain cover; only the filter differs.
+    source = _gradient(160, 90).convert("RGBA")
+    square = render_cover(source, 90)
+
+    frame = render_enhanced(source, 32)
+
+    expected = square.resize((32, 32), Image.Resampling.LANCZOS)
+    assert frame.tobytes() == expected.tobytes()
+    assert frame.tobytes() != render_cover(source, 32).tobytes()

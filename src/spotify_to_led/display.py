@@ -24,6 +24,12 @@ a reader or a download. The rule:
   artwork" for an item that has some, which S-05 accepted over a flash of the
   placeholder. Only before anything was chosen at all does a pending cover
   show the placeholder.
+- With AI enhancement switched on (FR-019), a cover whose enhanced frame is
+  being generated shows the playing placeholder: generation takes seconds,
+  far longer than a changeover should keep the previous item's cover up
+  unmarked. A ready cover's presentation says whether it is the enhanced
+  frame, so switching enhancement either way redraws the current item, and
+  a generation that fails or is paused shows the plain cover.
 - Whatever a reader's snapshot chose, cover, idle, placeholder or symbol,
   newly chosen or kept through a changeover, is stale once reads have been
   failing, or no read has succeeded, for more than `STALE_AFTER_SECONDS`,
@@ -43,10 +49,13 @@ since then: a board that was switched off and on comes back blank.
 
 Each sample tells the cover loader which cover it wants and only asks for its
 state; the download runs in the loader's own task, so a slow image server
-cannot delay link-down detection or a redraw. The loop keeps the frame of the
-cover it last chose rather than asking the loader for it, because during a
-changeover the loader has already moved on to the next cover while the board
-still shows, and after a reconnect redraws, the previous one.
+cannot delay link-down detection or a redraw. When the owner's switch is on,
+read afresh on every sample, the loader is also told the item's widest image
+to enhance the cover from, and a generation runs in that same task. The loop
+keeps the frame of the cover it last chose rather than asking the loader for
+it, because during a changeover the loader has already moved on to the next
+cover while the board still shows, and after a reconnect redraws, the
+previous one.
 
 A failed push is retried while the same presentation stays wanted, 1 s
 doubling to 60 s, restarted for each new presentation. Once the board can show
@@ -57,7 +66,7 @@ The log lines are the evidence that the board recovers unattended, so they
 have to stay readable in `pm2 logs`: INFO when the link is lost, one WARNING
 per failed connect, with a traceback only on the first of each outage, INFO
 on connect, and INFO on each presentation change, naming the cover's URL and
-whether it is stale. Each attempt also gets the library's own INFO
+whether it is enhanced or stale. Each attempt also gets the library's own INFO
 "connecting to" line, and a scan for an absent board takes about 30 s, so at
 the 60 s ceiling a board that is off all day costs about 2,000 lines, whether
 it was off from boot or switched off later.
@@ -75,6 +84,7 @@ from PIL import Image
 from spotify_to_led import frames
 from spotify_to_led.board.transport import BoardTransport, LinkState
 from spotify_to_led.covers import CoverLoader, CoverState, CoverStatus, select_artwork
+from spotify_to_led.owner_settings import OwnerSettings
 from spotify_to_led.spotify.playback import PlaybackSnapshot, PlaybackStatus
 
 logger = logging.getLogger(__name__)
@@ -115,16 +125,20 @@ class PresentationKind(StrEnum):
 class Presentation:
     """What the board should show: a kind, the cover's URL for a cover, and staleness.
 
-    Hashable and compared by value, so the loop can tell a change of cover,
+    `enhanced` says whether a cover is its AI-enhanced frame. Hashable and
+    compared by value, so the loop can tell a change of cover, of its frame
     or of the marker alone, from the same presentation sampled again.
     """
 
     kind: PresentationKind
     url: str | None = None
     stale: bool = False
+    enhanced: bool = False
 
     def __str__(self) -> str:
         name = f"cover {self.url}" if self.kind is PresentationKind.COVER else str(self.kind)
+        if self.enhanced:
+            name = f"{name} (enhanced)"
         return f"{name} (stale)" if self.stale else name
 
 
@@ -158,6 +172,19 @@ def wanted_cover_url(snapshot: PlaybackSnapshot | None, size: int) -> str | None
     return artwork.url if artwork is not None else None
 
 
+def enhancement_source_url(snapshot: PlaybackSnapshot | None) -> str | None:
+    """The URL of the image to enhance the cover `snapshot` calls for from, or `None`.
+
+    The widest image, which Spotify lists first: the model redraws the cover,
+    and the more of it it sees, the better.
+    """
+    if snapshot is None or snapshot.status not in _SHOWS_AN_ITEM:
+        return None
+    if snapshot.item is None or not snapshot.item.artwork:
+        return None
+    return snapshot.item.artwork[0].url
+
+
 def select_presentation(
     snapshot: PlaybackSnapshot | None,
     cover: tuple[str, CoverState] | None,
@@ -182,12 +209,13 @@ def select_presentation(
     elif cover is None:
         chosen = PLACEHOLDER
     elif cover[1].status is CoverStatus.READY:
-        chosen = Presentation(PresentationKind.COVER, cover[0])
+        chosen = Presentation(PresentationKind.COVER, cover[0], enhanced=cover[1].enhanced)
     elif cover[1].status is CoverStatus.PENDING:
         # The changeover: whatever was chosen last, idle included, stays until
         # the new cover is ready, rather than flashing the placeholder.
         chosen = previous if previous is not None else PLACEHOLDER
     else:
+        # A failed download, or an enhanced frame still being generated.
         chosen = PLACEHOLDER
     # Whatever the kind, and recomputed for a kept presentation too: staleness
     # is about the reads now, not about when the presentation was chosen.
@@ -214,6 +242,7 @@ async def run_display(
     current: Callable[[], PlaybackSnapshot | None],
     *,
     covers: CoverLoader | None = None,
+    owner_settings: Callable[[], OwnerSettings] | None = None,
     status: DisplayStatus | None = None,
     clock: Clock = _utc_now,
     sleep: Sleep = asyncio.sleep,
@@ -222,8 +251,10 @@ async def run_display(
 
     `current` returns the believed state, or `None` when there is no reader.
     `covers` downloads the covers; without one, an item with artwork shows the
-    placeholder. `status`, when given, is kept up to date with the
-    presentation last attempted and whether its push failed.
+    placeholder. `owner_settings` returns the owner's current choices, and is
+    given only when `covers` has an enhancer: with it, and enhancement
+    switched on, covers are wanted enhanced. `status`, when given, is kept up
+    to date with the presentation last attempted and whether its push failed.
     Nothing but `CancelledError` leaves this coroutine: the task must not be
     able to prevent the application from serving.
     """
@@ -235,9 +266,9 @@ async def run_display(
     attempted: tuple[Presentation, int] | None = None
     # The presentation the rule last chose, which a changeover keeps.
     previous: Presentation | None = None
-    # The URL and frame of the cover last chosen, kept here because the loader
-    # forgets it as soon as the next cover is wanted.
-    retained: tuple[str, Image.Image] | None = None
+    # The URL, enhancement and frame of the cover last chosen, kept here
+    # because the loader forgets it as soon as the next cover is wanted.
+    retained: tuple[str, bool, Image.Image] | None = None
     # Whether the last push failed, and when and how soon to try it again.
     push_failed = False
     retry_in = 0.0
@@ -253,15 +284,21 @@ async def run_display(
             cover: tuple[str, CoverState] | None = None
             if covers is not None:
                 url = wanted_cover_url(snapshot, size)
-                # A no-op for the URL already wanted; never waits for the download.
-                covers.want(url)
+                enhance = owner_settings is not None and owner_settings().ai_enhanced
+                source = enhancement_source_url(snapshot) if enhance else None
+                # A no-op for the cover already wanted; never waits for the
+                # download. The plain wish is made exactly as without enhancement.
+                if source is None:
+                    covers.want(url)
+                else:
+                    covers.want(url, enhance_from=source)
                 if url is not None:
                     cover = (url, covers.state(url))
             previous = select_presentation(snapshot, cover, previous, clock())
             if cover is not None and cover[1].frame is not None:
                 # Only a ready cover carries a frame, and a ready cover is
                 # always the one chosen.
-                retained = (cover[0], cover[1].frame)
+                retained = (cover[0], cover[1].enhanced, cover[1].frame)
             wanted = (previous, transport.connections)
             if wanted != attempted:
                 presentation = wanted[0]
@@ -300,7 +337,7 @@ async def run_display(
 
 
 def _frame_for(
-    presentation: Presentation, size: int, retained: tuple[str, Image.Image] | None
+    presentation: Presentation, size: int, retained: tuple[str, bool, Image.Image] | None
 ) -> Image.Image:
     """Return the RGB `(size, size)` frame that draws `presentation`, marked if stale."""
     if presentation.kind is PresentationKind.IDLE:
@@ -309,12 +346,12 @@ def _frame_for(
         frame = frames.playing_placeholder(size)
     elif presentation.kind is PresentationKind.NO_ARTWORK:
         frame = frames.no_artwork(size)
-    elif retained is None or retained[0] != presentation.url:
+    elif retained is None or retained[:2] != (presentation.url, presentation.enhanced):
         # Cannot happen while every ready cover is retained as it is chosen;
         # raised rather than drawing some other cover under this one's name.
         raise RuntimeError(f"no frame retained for {presentation}")
     else:
-        frame = retained[1]
+        frame = retained[2]
     return frames.with_stale_marker(frame) if presentation.stale else frame
 
 

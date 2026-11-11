@@ -468,18 +468,18 @@ the previous commit. Leftover `.ai.png` files are harmless.
 
 #### Automated
 
-- [x] 2.1 `uv run pytest` passes, including new tests for: store round-trip, unreadable/missing file means defaults, PUT saves and `/status` reflects it, `text/plain` body rejected with no change, 409 without a key, the key never present in `/status`
+- [x] 2.1 `uv run pytest` passes, including new tests for: store round-trip, unreadable/missing file means defaults, PUT saves and `/status` reflects it, `text/plain` body rejected with no change, 409 without a key, the key never present in `/status` — f2a0b88
 
 #### Manual
 
-- [x] 2.2 On the laptop, ticking the checkbox survives a service restart, and with no key the checkbox is disabled with its reason shown
+- [x] 2.2 On the laptop, ticking the checkbox survives a service restart, and with no key the checkbox is disabled with its reason shown — f2a0b88
 
 ### Phase 3: Enhanced covers end to end
 
 #### Automated
 
-- [ ] 3.1 `uv run pytest` passes, with new tests covering the enhanced cache hit, the PENDING/GENERATING/READY sequence, no request after restart, redraw on flip both ways, the retry budget, 400 with no retry, the 402/403 pause until 00:00 UTC, the marker on a stale enhanced cover, and no request with the switch off
-- [ ] 3.2 The existing plain-path tests in `test_covers.py`, `test_display.py` and `test_frame_cache.py` pass unmodified
+- [x] 3.1 `uv run pytest` passes, with new tests covering the enhanced cache hit, the PENDING/GENERATING/READY sequence, no request after restart, redraw on flip both ways, the retry budget, 400 with no retry, the 402/403 pause until 00:00 UTC, the marker on a stale enhanced cover, and no request with the switch off
+- [x] 3.2 The existing plain-path tests in `test_covers.py`, `test_display.py` and `test_frame_cache.py` pass unmodified
 
 #### Manual
 

@@ -6,12 +6,19 @@ spent. The tests pin the request's shape, the decoding of a good answer, and
 which of the three exceptions each failure becomes, since the retry and pause
 logic built on `generate` acts on nothing else. The key is a recognisable
 string so that its absence from every exception can be checked.
+
+The `Enhancer` built on it runs against the same scripted OpenRouter, with a
+sleep that records each delay and returns at once, and a clock that stands
+still until a test moves it, so the retry budget and the pause until 00:00
+UTC are checked without waiting.
 """
 
 import asyncio
 import base64
 import json
+import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta, timezone
 from io import BytesIO
 
 import httpx2
@@ -25,8 +32,11 @@ from spotify_to_led.enhance import (
     EnhanceFailed,
     EnhanceRefused,
     EnhanceRetryable,
+    Enhancer,
     generate,
+    next_utc_midnight,
 )
+from spotify_to_led.rendering import render_enhanced
 
 AN_API_KEY = "sk-or-v1-test-key-that-must-never-leak"
 A_MODEL = "black-forest-labs/flux-3-image-klein"
@@ -282,3 +292,221 @@ async def test_the_key_never_appears_in_an_exception(
     cause = raised.value.__cause__
     if cause is not None:
         assert AN_API_KEY not in str(cause)
+
+
+# --- the enhancer: retries, give-up and pause -----------------------------
+
+BOARD_SIZE = 32
+A_COVER_URL = "https://i.scdn.co/image/ab67616d0000b273aaaa"
+ANOTHER_COVER_URL = "https://i.scdn.co/image/ab67616d0000b273bbbb"
+# Mid-afternoon, so the next 00:00 UTC is the start of the following day.
+AFTERNOON = datetime(2026, 11, 11, 15, 30, tzinfo=UTC)
+NEXT_MIDNIGHT = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
+
+
+class ScriptedOpenRouter:
+    """Answers each request with the next scripted response, recording what it got."""
+
+    def __init__(self, answers: list[httpx2.Response]) -> None:
+        self.answers = list(answers)
+        self.requests: list[httpx2.Request] = []
+
+    async def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        self.requests.append(request)
+        assert self.answers, "unscripted request to OpenRouter"
+        return self.answers.pop(0)
+
+
+class RecordingSleep:
+    """Records each delay and returns at once."""
+
+    def __init__(self) -> None:
+        self.durations: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.durations.append(seconds)
+
+
+class FakeClock:
+    """A clock that stands still at `now` until a test moves it."""
+
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+def an_enhancer(
+    server: ScriptedOpenRouter, sleep: RecordingSleep, clock: FakeClock | None = None
+) -> Enhancer:
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(server))
+    return Enhancer(
+        client,
+        AN_API_KEY,
+        A_MODEL,
+        BOARD_SIZE,
+        clock=clock or FakeClock(AFTERNOON),
+        sleep=sleep,
+    )
+
+
+def retryable() -> httpx2.Response:
+    return httpx2.Response(503, text="no provider available")
+
+
+async def test_an_enhanced_cover_is_the_answer_shrunk_with_lanczos_and_its_cost_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = ScriptedOpenRouter([a_generated_image(cost=0.009)])
+    sleep = RecordingSleep()
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.enhance"):
+        frame = await an_enhancer(server, sleep).enhance(A_COVER_URL, SOURCE, SOURCE_MIME)
+
+    assert frame is not None
+    expected = render_enhanced(Image.open(BytesIO(_png())), BOARD_SIZE)
+    assert frame.size == (BOARD_SIZE, BOARD_SIZE)
+    assert frame.tobytes() == expected.tobytes()
+    [request] = server.requests
+    assert request.extensions["timeout"]["read"] == 90.0
+    assert sleep.durations == []
+    assert [r.getMessage() for r in caplog.records] == [
+        f"cover enhanced: {A_COVER_URL} (cost $0.0090)"
+    ]
+
+
+async def test_two_retryable_failures_then_success_wait_5_then_10_s() -> None:
+    server = ScriptedOpenRouter([retryable(), retryable(), a_generated_image()])
+    sleep = RecordingSleep()
+    enhancer = an_enhancer(server, sleep)
+
+    frame = await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME)
+
+    assert frame is not None
+    assert len(server.requests) == 3
+    assert sleep.durations == [5.0, 10.0]
+    assert not enhancer.gave_up(A_COVER_URL)
+
+
+async def test_three_retryable_failures_give_up_until_forget(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = ScriptedOpenRouter([retryable(), retryable(), retryable()])
+    sleep = RecordingSleep()
+    enhancer = an_enhancer(server, sleep)
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.enhance"):
+        assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+
+    assert len(server.requests) == 3
+    assert sleep.durations == [5.0, 10.0]
+    assert enhancer.gave_up(A_COVER_URL)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, "the outcome is logged once"
+    assert A_COVER_URL in warnings[0].getMessage()
+
+    # Wanted again: no request, until the switch is flipped.
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert len(server.requests) == 3
+    # Another image is not affected.
+    assert not enhancer.gave_up(ANOTHER_COVER_URL)
+
+    enhancer.forget()
+    server.answers = [a_generated_image()]
+    assert not enhancer.gave_up(A_COVER_URL)
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+    assert len(server.requests) == 4
+
+
+async def test_a_rejected_request_is_given_up_on_without_a_retry(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    answer = an_answer({"error": {"code": 400, "message": "bad input image"}}, 400)
+    server = ScriptedOpenRouter([answer])
+    sleep = RecordingSleep()
+    enhancer = an_enhancer(server, sleep)
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.enhance"):
+        assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+
+    assert len(server.requests) == 1
+    assert sleep.durations == []
+    assert enhancer.gave_up(A_COVER_URL)
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+
+@pytest.mark.parametrize("status", [402, 403])
+async def test_a_credit_refusal_pauses_every_image_until_the_next_utc_midnight(
+    status: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    refusal = an_answer({"error": {"code": status, "message": "Key limit exceeded"}}, status)
+    server = ScriptedOpenRouter([refusal])
+    sleep = RecordingSleep()
+    clock = FakeClock(AFTERNOON)
+    enhancer = an_enhancer(server, sleep, clock)
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.enhance"):
+        assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+
+    assert enhancer.paused_until == NEXT_MIDNIGHT
+    assert sleep.durations == [], "a refusal is not retried"
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+    assert NEXT_MIDNIGHT.isoformat() in caplog.records[0].getMessage()
+    # Not a give-up: the image is fine, the key is not.
+    assert not enhancer.gave_up(A_COVER_URL)
+
+    # Until midnight, no request for any image, and `forget` does not lift it.
+    enhancer.forget()
+    clock.now = NEXT_MIDNIGHT - timedelta(seconds=1)
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert await enhancer.enhance(ANOTHER_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert len(server.requests) == 1
+    assert enhancer.paused_until == NEXT_MIDNIGHT
+
+    clock.now = NEXT_MIDNIGHT
+    server.answers = [a_generated_image()]
+    assert enhancer.paused_until is None
+    assert await enhancer.enhance(ANOTHER_COVER_URL, SOURCE, SOURCE_MIME) is not None
+    assert len(server.requests) == 2
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (AFTERNOON, NEXT_MIDNIGHT),
+        (datetime(2026, 11, 11, 23, 59, 59, tzinfo=UTC), NEXT_MIDNIGHT),
+        # Exactly midnight: the limit has just reset, so the next reset is a day on.
+        (datetime(2026, 11, 12, 0, 0, tzinfo=UTC), datetime(2026, 11, 13, 0, 0, tzinfo=UTC)),
+        (datetime(2026, 11, 12, 0, 0, 1, tzinfo=UTC), datetime(2026, 11, 13, 0, 0, tzinfo=UTC)),
+        # An evening west of Greenwich is already the next day in UTC.
+        (
+            datetime(2026, 11, 11, 20, 0, tzinfo=timezone(timedelta(hours=-5))),
+            datetime(2026, 11, 13, 0, 0, tzinfo=UTC),
+        ),
+    ],
+)
+def test_the_pause_ends_at_the_first_utc_midnight_after_the_refusal(
+    now: datetime, expected: datetime
+) -> None:
+    assert next_utc_midnight(now) == expected
+
+
+async def test_the_key_never_appears_in_the_enhancers_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    answers = [
+        httpx2.Response(429, text=AN_API_KEY),
+        an_answer({"error": {"message": f"bad {AN_API_KEY}"}}, 400),
+    ]
+    server = ScriptedOpenRouter(answers)
+    enhancer = an_enhancer(server, RecordingSleep())
+
+    with caplog.at_level(logging.DEBUG):
+        await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME)
+        server.answers = [an_answer({"error": {"message": f"no {AN_API_KEY}"}}, 401)]
+        await enhancer.enhance(ANOTHER_COVER_URL, SOURCE, SOURCE_MIME)
+
+    assert len(server.requests) == 3
+    assert caplog.records, "the outcomes are logged"
+    assert AN_API_KEY not in caplog.text

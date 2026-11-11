@@ -17,12 +17,19 @@ cover seen before, even before a restart, is shown without a download. A
 cover is marked once reads have been failing for over 30 s. It pushes again
 whenever that choice changes or the link comes back.
 
+With an OpenRouter key and Spotify both configured, the loader also gets an
+`Enhancer` on the same client, and the display reads the owner's switch on
+every sample: switched on, covers are redrawn by an image model (FR-019),
+each image once, kept beside its plain frame in the cache. Switched off, or
+without a key, no OpenRouter request is made.
+
 The status page at `/` is static and renders `/status`, which reports the
 believed playback, the authorization and the board link, including the case
 where the display task has ended, so a board fault is explained, not hidden.
 Its one control, the AI-enhanced covers checkbox, writes through
 `PUT /settings`, which keeps the owner's choice in `OWNER_SETTINGS_FILE` so it
-survives a restart.
+survives a restart. A change of it also makes the enhancer forget the images
+it gave up on, so switching off and on is how the owner asks for another try.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
@@ -51,6 +58,7 @@ from spotify_to_led.board.transport import BoardTransport, LinkState
 from spotify_to_led.config import load_settings
 from spotify_to_led.covers import CoverLoader
 from spotify_to_led.display import STALE_AFTER_SECONDS, DisplayStatus, is_stale, run_display
+from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
@@ -130,15 +138,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     reader: SpotifyReader | None = None
     reader_task: asyncio.Task[None] | None = None
     covers: CoverLoader | None = None
+    enhancer: Enhancer | None = None
     app.state.spotify_reader = None
     if settings.spotify_enabled:
         spotify_client = create_spotify_client()
         reader = SpotifyReader(spotify_client, settings, TokenStore(settings.spotify_token_file))
         app.state.spotify_reader = reader
+        if settings.openrouter_api_key is not None:
+            # The shared client carries no headers of its own; the key goes
+            # on each OpenRouter request and nowhere else.
+            enhancer = Enhancer(
+                spotify_client,
+                settings.openrouter_api_key.get_secret_value(),
+                settings.openrouter_model,
+                settings.board_size,
+            )
         covers = CoverLoader(
             spotify_client,
             settings.board_size,
             cache=FrameCache(settings.cover_cache_dir, settings.board_size),
+            enhancer=enhancer,
         )
         # `run()` classifies and logs its own failures, so like the display
         # task it cannot take the server down.
@@ -150,10 +169,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # `None` without a reader, which the display rule shows as idle.
         return reader.snapshot if reader is not None else None
 
+    def owner_settings() -> OwnerSettings:
+        # Read on every sample, so a change from the page is acted on at once.
+        return app.state.owner_settings
+
+    # For `PUT /settings`, which tells it when the switch changes.
+    app.state.enhancer = enhancer
     # Started after the reader exists, because `current` closes over it.
     display_status = DisplayStatus()
     task = asyncio.create_task(
-        run_display(transport, settings.board_size, current, covers=covers, status=display_status)
+        run_display(
+            transport,
+            settings.board_size,
+            current,
+            covers=covers,
+            # Only with an enhancer: without one, the switch has nothing to switch.
+            owner_settings=owner_settings if enhancer is not None else None,
+            status=display_status,
+        )
     )
     # For `/status`, which reports the board without reaching into the loop.
     app.state.transport = transport
@@ -327,6 +360,7 @@ async def put_settings(request: Request, change: SettingsChange) -> dict[str, bo
             "and none is configured.",
             status_code=409,
         )
+    previous: OwnerSettings = request.app.state.owner_settings
     updated = OwnerSettings(ai_enhanced=change.ai_enhanced)
     try:
         request.app.state.owner_settings_store.save(updated)
@@ -336,6 +370,10 @@ async def put_settings(request: Request, change: SettingsChange) -> dict[str, bo
         logger.warning("saving the owner settings failed (%s)", type(failure).__name__)
         return PlainTextResponse("The setting could not be saved.", status_code=500)
     request.app.state.owner_settings = updated
+    enhancer: Enhancer | None = request.app.state.enhancer
+    if enhancer is not None and updated != previous:
+        # A flip is the owner's way to ask again for the covers given up on.
+        enhancer.forget()
     return {"ai_enhanced": updated.ai_enhanced}
 
 

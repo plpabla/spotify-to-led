@@ -27,6 +27,7 @@ from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.stub import PngBoardTransport
 from spotify_to_led.board.transport import LinkState, frame_to_pixel_colors
 from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
+from spotify_to_led.enhance import Enhancer
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spotify.auth import AUTHORIZE_URL, SCOPE, TOKEN_URL
 from spotify_to_led.spotify.playback import PlaybackSnapshot, PlaybackStatus, ReadFailure
@@ -813,3 +814,51 @@ def test_the_openrouter_key_is_in_no_answer(
     assert AN_OPENROUTER_KEY not in put.text
     assert AN_OPENROUTER_KEY not in status.text
     assert set(status.json()["enhancement"]) == {"available", "enabled"}
+
+
+def test_with_spotify_and_a_key_flipping_the_switch_makes_the_enhancer_forget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    use_openrouter_key(monkeypatch)
+    forgotten: list[bool] = []
+    monkeypatch.setattr(Enhancer, "forget", lambda self: forgotten.append(True))
+
+    with TestClient(main.app) as client:
+        assert isinstance(main.app.state.enhancer, Enhancer)
+        client.put("/settings", json={"ai_enhanced": True})
+        after_on = len(forgotten)
+        # The same value again is no change, so nothing to forget.
+        client.put("/settings", json={"ai_enhanced": True})
+        after_repeat = len(forgotten)
+        client.put("/settings", json={"ai_enhanced": False})
+
+    assert (after_on, after_repeat, len(forgotten)) == (1, 1, 2)
+
+
+@pytest.mark.parametrize("spotify", [False, True], ids=["key only", "spotify only"])
+def test_without_both_spotify_and_a_key_there_is_no_enhancer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, spotify: bool
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    if spotify:
+        use_spotify(monkeypatch, FakeSpotify())
+    else:
+        use_openrouter_key(monkeypatch)
+    passed: dict[str, object] = {}
+
+    async def record(*args: object, **kwargs: object) -> None:
+        passed.update(kwargs)
+
+    monkeypatch.setattr(main, "run_display", record)
+
+    with TestClient(main.app) as client:
+        enhancer = main.app.state.enhancer
+        if not spotify:
+            # Switching on is allowed with a key, and must not fail without a loader.
+            assert client.put("/settings", json={"ai_enhanced": True}).status_code == 200
+
+    assert enhancer is None
+    # Without an enhancer the display is not even given the switch.
+    assert passed["owner_settings"] is None

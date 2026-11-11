@@ -43,10 +43,11 @@ redrawn by an image model (`enhance.generate`) reads better on the board than
 the plain downscale, and how long a generation takes. Each cover is sent as
 it was read, so pass the widest image there is (Spotify's 640 px URL). The
 answer is shrunk to a board frame two ways: by `render_cover`'s area average
-(BOX), as the service does today, and by LANCZOS, as the proof of concept
-did. The board shows each cover plain, then enhanced BOX, then enhanced
-LANCZOS, before moving on to the next, and the contact sheet's three columns
-are the same three frames. The marker pass is left out: the marker is drawn
+(BOX), as the service does for a plain cover, and by LANCZOS
+(`render_enhanced`), as the proof of concept did and as the service does for
+an enhanced cover since this bake-off chose it (FR-019). The board shows
+each cover plain, then enhanced BOX, then enhanced LANCZOS, before moving on
+to the next, and the contact sheet's three columns are the same three frames. The marker pass is left out: the marker is drawn
 the same way over any frame, and this run is about the cover.
 
 Every generation is a paid OpenRouter call, about $0.009 with the default
@@ -74,7 +75,7 @@ from spotify_to_led.board.transport import BoardTransport
 from spotify_to_led.config import Settings, load_settings
 from spotify_to_led.enhance import EnhanceError, generate
 from spotify_to_led.frames import with_stale_marker
-from spotify_to_led.rendering import render_cover
+from spotify_to_led.rendering import render_cover, render_enhanced
 
 DEFAULT_HOLD_SECONDS = 4.0
 DOWNLOAD_TIMEOUT_SECONDS = 10.0
@@ -158,15 +159,6 @@ def render_shots(covers: list[Cover], size: int) -> list[Shot]:
     return shots
 
 
-def lanczos_frame(image: Image.Image, size: int) -> Image.Image:
-    """Shrink `image` to a board frame as the proof of concept did, with LANCZOS."""
-    # `render_cover` at the image's own side is only its square crop and RGB
-    # conversion, since a resize to the same size changes nothing; so both
-    # downscales start from exactly the same square.
-    square = render_cover(image, min(image.size))
-    return square.resize((size, size), Image.Resampling.LANCZOS)
-
-
 async def enhance_shots(
     client: httpx2.AsyncClient, covers: list[Cover], settings: Settings
 ) -> list[Shot]:
@@ -211,7 +203,7 @@ async def enhance_shots(
             cost = f"${generated.cost:.4f}"
         print(f"  {label}: {elapsed:.1f} s, {cost}")
         box = render_cover(generated.image, size)
-        lanczos = lanczos_frame(generated.image, size)
+        lanczos = render_enhanced(generated.image, size)
         shots.append(Shot(index, cover.name, ENHANCED_BOX, box))
         shots.append(Shot(index, cover.name, ENHANCED_LANCZOS, lanczos))
 
