@@ -343,6 +343,24 @@ def test_status_reports_the_link_down_once_the_display_task_has_ended(
     assert board["link"] == "down"
 
 
+def test_the_status_page_is_served_and_renders_status_without_innerhtml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    # The calls themselves, not a mention of the paths in a comment.
+    assert 'fetch("/status"' in response.text
+    assert 'link.href = "/authorize"' in response.text
+    # A cheap guard on the rule that Spotify's text goes in as text: item
+    # names are attacker-influenceable, anyone can name a podcast episode.
+    assert "innerHTML" not in response.text
+
+
 def test_authorize_redirects_to_spotify_with_the_configured_redirect_uri(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -392,6 +410,7 @@ def test_a_callback_carrying_spotifys_error_is_a_400_that_names_it(
 
     assert response.status_code == 400
     assert "access_denied" in response.text
+    assert "Status page: /" in response.text
 
 
 def test_a_callback_error_that_is_not_a_spotify_code_is_not_echoed(
@@ -461,8 +480,8 @@ def test_authorize_callback_and_status_end_to_end_with_no_token_in_any_answer(
             time.sleep(0.05)
             status = client.get("/status")
 
-    assert callback.status_code == 200
-    assert "succeeded" in callback.text
+    assert callback.status_code == 303
+    assert callback.headers["location"] == "/?authorized=1"
     assert A_CODE not in callback.text
     body = status.json()
     assert set(body) == {

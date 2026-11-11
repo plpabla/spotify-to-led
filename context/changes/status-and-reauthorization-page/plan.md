@@ -323,20 +323,20 @@ mention it are archived history and stay as they are.
 
 #### Automated
 
-- [x] 1.1 Test suite passes: `uv run pytest`
-- [x] 1.2 `/playback` no longer exists, and nothing in `src/` or `tests/` references it: `grep -rn "/playback" src tests` is empty
-- [x] 1.3 The `/status` end-to-end test asserts no access or refresh token appears in the body
+- [x] 1.1 Test suite passes: `uv run pytest` — 845ee6b
+- [x] 1.2 `/playback` no longer exists, and nothing in `src/` or `tests/` references it: `grep -rn "/playback" src tests` is empty — 845ee6b
+- [x] 1.3 The `/status` end-to-end test asserts no access or refresh token appears in the body — 845ee6b
 
 ### Phase 2: The page and the callback
 
 #### Automated
 
-- [ ] 2.1 Test suite passes: `uv run pytest`
-- [ ] 2.2 `index.html` has no `innerHTML`: `grep -c innerHTML src/spotify_to_led/static/index.html` prints 0
+- [x] 2.1 Test suite passes: `uv run pytest`
+- [x] 2.2 `index.html` has no `innerHTML`: `grep -c innerHTML src/spotify_to_led/static/index.html` prints 0
 
 #### Manual
 
-- [ ] 2.3 On the laptop (`uv run python -m spotify_to_led.main`, stub board), the page renders the not-configured and the playing cases legibly on a desktop and a phone-width window
+- [x] 2.3 On the laptop (`uv run python -m spotify_to_led.main`, stub board), the page renders the not-configured and the playing cases legibly on a desktop and a phone-width window
 
 ### Phase 3: Verification on the Pi and docs
 

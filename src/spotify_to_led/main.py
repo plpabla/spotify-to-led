@@ -30,12 +30,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx2
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.transport import BoardTransport, LinkState
@@ -58,6 +59,9 @@ SPOTIFY_ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 # granted it, and refreshing does not extend that. Spotify reports no expiry,
 # so this is an estimate for the status page, never a deadline the code acts on.
 REFRESH_TOKEN_LIFETIME = timedelta(days=182)
+# Beside the package rather than the working directory, so the page is found
+# from the checkout under pm2 and from the tests alike.
+STATUS_PAGE = Path(__file__).parent / "static" / "index.html"
 
 
 def _drop_query_strings(record: logging.LogRecord) -> bool:
@@ -182,6 +186,16 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+async def status_page() -> HTMLResponse:
+    """The status page, which renders `/status` in the browser.
+
+    Static on purpose: everything it shows comes from `/status`, so nothing
+    from Spotify is ever put into HTML on the server.
+    """
+    return HTMLResponse(STATUS_PAGE.read_text(encoding="utf-8"))
+
+
 @app.get("/authorize")
 async def authorize(request: Request) -> Response:
     """Send the owner to Spotify's consent screen.
@@ -201,11 +215,12 @@ async def callback(
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
-) -> PlainTextResponse:
+) -> Response:
     """Finish the authorization Spotify redirected back with.
 
-    The code is never echoed: every answer here is a fixed sentence, plus
-    Spotify's own error name when it refused.
+    Success lands on the status page, which shows a fixed notice for it. The
+    code is never echoed: every other answer is a fixed sentence, plus
+    Spotify's own error name when it refused, pointing back to the page.
     """
     reader = _reader(request)
     if reader is None:
@@ -213,19 +228,22 @@ async def callback(
     if error is not None:
         named = error if SPOTIFY_ERROR_CODE.fullmatch(error) else "unknown error"
         return PlainTextResponse(
-            f"Spotify did not authorize the service ({named}). Start again at /authorize.",
+            f"Spotify did not authorize the service ({named}). Start again at /authorize. "
+            "Status page: /",
             status_code=400,
         )
     if code is None or state is None:
         return PlainTextResponse(
-            "The callback is missing its code or state. Start again at /authorize.",
+            "The callback is missing its code or state. Start again at /authorize. "
+            "Status page: /",
             status_code=400,
         )
     try:
         await reader.complete_authorization(code, state)
     except AuthorizationStateMismatch:
         return PlainTextResponse(
-            "This is not the authorization the service started. Start again at /authorize.",
+            "This is not the authorization the service started. Start again at /authorize. "
+            "Status page: /",
             status_code=400,
         )
     except (AuthorizationRevoked, SpotifyAuthError, httpx2.RequestError) as failure:
@@ -233,10 +251,11 @@ async def callback(
         # verifier, and nothing derived from it belongs in the log.
         logger.warning("Spotify code exchange failed (%s)", type(failure).__name__)
         return PlainTextResponse(
-            "Spotify could not complete the authorization. Try again at /authorize.",
+            "Spotify could not complete the authorization. Try again at /authorize. "
+            "Status page: /",
             status_code=502,
         )
-    return PlainTextResponse("Spotify authorization succeeded. You can close this tab.")
+    return RedirectResponse("/?authorized=1", status_code=303)
 
 
 @app.get("/status")

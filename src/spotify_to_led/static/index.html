@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spotify-to-led status</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 40rem; padding: 1rem; color: #1a1a1a; background: #fafafa; line-height: 1.4; }
+  h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+  section { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 0.75rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.4rem; }
+  p { margin: 0.25rem 0; overflow-wrap: anywhere; }
+  .muted { color: #666; }
+  .bad { color: #a40000; font-weight: 600; }
+  .good { color: #186a18; font-weight: 600; }
+  .notice { background: #e6f4e6; border-color: #9c9; }
+  .alert { background: #fdecea; border-color: #e0a0a0; }
+  .promoted { border: 2px solid #a40000; }
+  a.action { display: inline-block; margin: 0.4rem 0; padding: 0.4rem 0.8rem; background: #1db954; color: #000; border-radius: 4px; text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>spotify-to-led</h1>
+<section id="notice" class="notice" hidden><p>Spotify authorization succeeded.</p></section>
+<section id="unreachable" class="alert" hidden><p class="bad">The service is not answering.</p><p class="muted">This page retries every 3 seconds.</p></section>
+<div id="sections">
+  <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
+  <section id="reading"><h2>Reading Spotify</h2></section>
+  <section id="board"><h2>Board</h2></section>
+  <section id="authorization" hidden><h2>Spotify authorization</h2></section>
+</div>
+<script>
+"use strict";
+// Every value from /status, Spotify's item names above all, goes in through
+// textContent: anyone can name a podcast episode.
+
+const POLL_MS = 3000;
+const CAUSES = {
+  authorization_needed: "Spotify needs re-authorization",
+  network: "cannot reach Spotify",
+  api_error: "Spotify answered with an error",
+  rate_limited: "rate limited by Spotify",
+};
+const KINDS = { cover: "cover", idle: "idle", placeholder: "placeholder", no_artwork: "no-artwork" };
+
+if (new URLSearchParams(location.search).get("authorized") === "1") {
+  document.getElementById("notice").hidden = false;
+}
+
+function el(tag, text, cls) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (cls) node.className = cls;
+  return node;
+}
+
+function fill(id, title, ...children) {
+  document.getElementById(id).replaceChildren(el("h2", title), ...children);
+}
+
+// Python's isoformat carries microseconds; trimmed to milliseconds so every
+// browser parses it.
+function parse(iso) {
+  return iso ? Date.parse(iso.replace(/(\.\d{3})\d+/, "$1")) : null;
+}
+
+function since(now, iso) {
+  let s = Math.max(0, Math.round((now - parse(iso)) / 1000));
+  if (s < 60) return s + " s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + " min " + (s % 60) + " s";
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + " h " + (m % 60) + " min";
+  return Math.floor(h / 24) + " days";
+}
+
+function when(iso) {
+  return new Date(parse(iso)).toLocaleString();
+}
+
+function renderPlayback(data) {
+  const playback = data.playback;
+  if (!data.configured) return fill("playback", "Playback", el("p", "Spotify is not configured.", "muted"));
+  if (playback.status === "unknown") return fill("playback", "Playback", el("p", "Not read yet.", "muted"));
+  if (playback.status === "nothing_playing" || !playback.item) {
+    return fill("playback", "Playback", el("p", "Nothing playing."));
+  }
+  const item = playback.item;
+  const state = playback.status === "paused" ? "Paused" : "Playing";
+  const parts = [el("p", state + " (" + item.kind + ")", "muted"), el("p", item.name || "(no name)", "good")];
+  if (item.subtitle) parts.push(el("p", item.subtitle));
+  fill("playback", "Playback", ...parts);
+}
+
+function renderReading(data, now) {
+  const playback = data.playback;
+  if (!data.configured) return fill("reading", "Reading Spotify", el("p", "Not reading: Spotify is not configured.", "muted"));
+  const parts = [];
+  if (playback.failure) {
+    parts.push(el("p", "Failing: " + (CAUSES[playback.failure] || playback.failure), "bad"));
+    if (playback.failure_since) {
+      parts.push(el("p", "Failing for " + since(now, playback.failure_since) + "."));
+      const stale = (now - parse(playback.failure_since)) / 1000 > data.stale_after_seconds;
+      parts.push(el("p", stale
+        ? "The board is now marked stale (failing for over " + data.stale_after_seconds + " s)."
+        : "The board is not marked stale yet (after " + data.stale_after_seconds + " s)."));
+    }
+  } else if (playback.last_read_at) {
+    parts.push(el("p", "Healthy.", "good"));
+  } else {
+    parts.push(el("p", "No read yet.", "muted"));
+  }
+  if (playback.last_read_at) {
+    parts.push(el("p", "Last good read " + since(now, playback.last_read_at) + " ago (" + when(playback.last_read_at) + ").", "muted"));
+  }
+  fill("reading", "Reading Spotify", ...parts);
+}
+
+function renderBoard(data) {
+  const board = data.board;
+  const parts = [];
+  if (board.link === "up") {
+    parts.push(el("p", "Link up.", "good"));
+  } else {
+    parts.push(el("p", board.task_running ? "Link down; reconnecting." : "Link down: the display task has ended.", "bad"));
+  }
+  const presentation = board.presentation;
+  if (!presentation) {
+    parts.push(el("p", "Nothing sent yet.", "muted"));
+  } else {
+    parts.push(el("p", "Last sent: " + (KINDS[presentation.kind] || presentation.kind)
+      + (presentation.stale ? ", marked stale." : ", not marked.")));
+    if (board.push_failed) parts.push(el("p", "That push failed; it is being retried.", "bad"));
+  }
+  fill("board", "Board", ...parts);
+}
+
+function renderAuthorization(data) {
+  const section = document.getElementById("authorization");
+  if (!data.configured) {
+    section.hidden = true;
+    return;
+  }
+  const auth = data.authorization;
+  const needed = data.playback.failure === "authorization_needed";
+  const never = !auth.authorized_at;
+  const promoted = needed || never;
+  const parts = [];
+  if (needed) parts.push(el("p", "Spotify needs re-authorization.", "bad"));
+  else if (never) parts.push(el("p", "The service has never been authorized.", "bad"));
+  if (!never) {
+    parts.push(el("p", "Granted " + when(auth.authorized_at) + "."));
+    parts.push(el("p", "Expires around " + when(auth.expires_around) + " (an estimate: Spotify does not report it).", "muted"));
+  }
+  const link = el("a", never ? "Authorize with Spotify" : "Re-authorize with Spotify", "action");
+  link.href = "/authorize";
+  parts.push(link);
+  parts.push(el("p", "If a Cloudflare Access sign-in expires partway through, just run it again.", "muted"));
+  fill("authorization", "Spotify authorization", ...parts);
+  section.hidden = false;
+  section.classList.toggle("promoted", promoted);
+  const container = document.getElementById("sections");
+  if (promoted) container.prepend(section);
+  else container.append(section);
+}
+
+async function refresh() {
+  try {
+    const response = await fetch("/status", { cache: "no-store" });
+    if (!response.ok) throw new Error("status " + response.status);
+    const data = await response.json();
+    const now = parse(data.now);
+    renderPlayback(data);
+    renderReading(data, now);
+    renderBoard(data);
+    renderAuthorization(data);
+    document.getElementById("unreachable").hidden = true;
+    document.getElementById("sections").hidden = false;
+  } catch (error) {
+    document.getElementById("unreachable").hidden = false;
+    document.getElementById("sections").hidden = true;
+  }
+  setTimeout(refresh, POLL_MS);
+}
+
+refresh();
+</script>
+</body>
+</html>
