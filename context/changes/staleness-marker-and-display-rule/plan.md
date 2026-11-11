@@ -293,8 +293,8 @@ None. Cached cover frames are unmarked renders and stay valid; the marker is dra
 
 #### Automated
 
-- [x] 1.1 Full suite passes: `uv run pytest`
-- [x] 1.2 No test or docstring still claims the placeholder or the symbol is never marked: `git grep -n -E "never.marked" -- src tests` returns nothing
+- [x] 1.1 Full suite passes: `uv run pytest` — 041bc76
+- [x] 1.2 No test or docstring still claims the placeholder or the symbol is never marked: `git grep -n -E "never.marked" -- src tests` returns nothing — 041bc76
 
 #### Manual
 
@@ -304,11 +304,11 @@ None. Cached cover frames are unmarked renders and stay valid; the marker is dra
 
 #### Automated
 
-- [ ] 2.1 Full suite passes on the Pi: `uv run pytest`
-- [ ] 2.2 After the tests, no REJECT rule remains: `sudo iptables -S OUTPUT` lists none
+- [x] 2.1 Full suite passes on the Pi: `uv run pytest`
+- [x] 2.2 After the tests, no REJECT rule remains: `sudo iptables -S OUTPUT` lists none
 
 #### Manual
 
-- [ ] 2.3 With a cover playing and outbound 443 rejected, the cover gains the marker after about 30 s and loses it after the rule is deleted
-- [ ] 2.4 With nothing playing and outbound 443 rejected, idle gains the marker after about 30 s and loses it after the rule is deleted
-- [ ] 2.5 The owner reads the marker from across the room over a cover and over idle, lit and dark, recorded in `verification.md` and OQ4
+- [x] 2.3 With a cover playing and outbound 443 rejected, the cover gains the marker after about 30 s and loses it after the rule is deleted
+- [x] 2.4 With nothing playing and outbound 443 rejected, idle gains the marker after about 30 s and loses it after the rule is deleted
+- [x] 2.5 The owner reads the marker from across the room over a cover and over idle, lit and dark, recorded in `verification.md` and OQ4

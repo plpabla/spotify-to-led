@@ -388,7 +388,10 @@ Foundations below assume these are present and do NOT re-scaffold them.
     no-artwork symbol, the idle display and a dedicated state are all plausible and all mean
     different things. The PRD states this must be resolved before FR-009's rule is complete, and
     FR-009's rule is what this slice delivers.
-  - Can a few corner pixels actually carry the signal at 32x32 from across a room? Owner. Block:
+  - ~~Can a few corner pixels actually carry the signal at 32x32 from across a room?~~ --
+    RESOLVED 2026-11-11: yes. During two real outages on the Pi the owner read the marker from
+    across the room over a cover and over idle, in a lit room and a dark one. The original
+    framing, kept for the record: Owner. Block:
     no -- resolved by observation on the real board, like the other legibility questions. This is
     the sharpest of them, since the marker is the whole signal that a cover cannot be trusted.
 - **Risk:** This slice is where the product's hardest guardrail is either honoured or broken, which
@@ -494,7 +497,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
 4. **Can the three non-cover visual elements be told apart at 32x32 from across a room?** --
    Owner. Block: none, but it gates the acceptance criteria of `S-02` (idle display), `S-05`
    (generic no-artwork symbol) and `S-06` (staleness marker). Decided by looking at the real board,
-   not on paper.
+   not on paper. Marker part settled 2026-11-11 (S-06): legible from across the room over a cover
+   and over idle, in a lit room and a dark one. See
+   `context/changes/staleness-marker-and-display-rule/verification.md`.
 5. **Track artwork or album artwork?** -- RESOLVED 2026-11-09 -- moot: a Spotify track carries no images of its own, only `album.images`; episodes carry their own. The original question is kept below for the record. Owner. Block: none; gates `S-04`. FR-017's cache shape
    was chosen so this does not need answering first.
 6. **Which `idotmatrix` implementation gets pinned?** -- RESOLVED 2026-11-04:
