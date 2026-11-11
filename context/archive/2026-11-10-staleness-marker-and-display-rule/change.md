@@ -1,10 +1,10 @@
 ---
 change_id: staleness-marker-and-display-rule
 title: Staleness marker completes the display rule (roadmap S-06)
-status: impl_reviewed
+status: archived
 created: 2026-11-10
 updated: 2026-11-11
-archived_at: null
+archived_at: 2026-11-11T12:44:49Z
 ---
 
 ## Notes

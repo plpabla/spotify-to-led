@@ -3,7 +3,7 @@ project: spotify-to-led
 version: 1
 status: draft
 created: 2026-11-03
-updated: 2026-11-10
+updated: 2026-11-11
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -76,7 +76,7 @@ human action"), and landing it is what allows the 7-day unattended observation t
 | S-03 | `bluetooth-link-self-recovery`              | switch the board off and on, or carry it out of range and back, and have the link return with no human action | S-02             | US-05, FR-013                                   | done |
 | S-04 | `artwork-on-the-board`                      | see the artwork of whatever is playing, and see it change when the item changes                             | S-02             | US-01, FR-006, FR-007, FR-008, FR-016, NFR-01   | done |
 | S-05 | `all-item-types-and-frame-reuse`            | see artwork for any item type including podcasts, with repeated artwork never re-rendered                   | S-04             | US-01, FR-010, FR-017                           | done |
-| S-06 | `staleness-marker-and-display-rule`         | tell at a glance that the board can no longer vouch for what it is showing                                  | S-04             | US-02, US-04, FR-004, FR-009, FR-018            | in-progress |
+| S-06 | `staleness-marker-and-display-rule`         | tell at a glance that the board can no longer vouch for what it is showing                                  | S-04             | US-02, US-04, FR-004, FR-009, FR-018            | done        |
 | S-07 | `status-and-reauthorization-page`           | open one page, read what the service believes and whether the board link is alive, and re-authorize Spotify | S-01, F-03, S-06 | US-02, US-06, FR-004, FR-005, FR-015            | proposed |
 | S-08 | `ai-enhanced-covers`                        | see an AI-enhanced version of the playing cover, made for the 32x32 panel rather than shrunk to it          | S-04, S-05       | -- (PRD v1 non-goal; post-v1, M-2)              | deferred |
 
@@ -411,7 +411,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   cover failed to download, the placeholder stays up unmarked however long reads fail (S-04
   review, F7). Resolved 2026-11-10: the placeholder now carries the marker like every
   presentation, and the outage test was run on 2026-11-11 by rejecting outbound HTTPS.
-- **Status:** in-progress
+- **Status:** done
 
 ### S-07: One page reports what the service believes, and re-authorizes Spotify
 
@@ -589,3 +589,5 @@ closes.)
   `context/archive/2026-11-09-artwork-on-the-board/`. Lesson: --.
 - **S-05: Owner can see artwork for any playing item type including podcast episodes, sees the generic symbol only for items with genuinely no artwork at all, and never waits for the same artwork to be downloaded and rendered twice -- including across restarts and reboots.** -- Archived 2026-11-10 ->
   `context/archive/2026-11-09-all-item-types-and-frame-reuse/`. Lesson: --.
+- **S-06: Owner can tell at a glance that the board can no longer vouch for what it is showing, because after a 30-second grace period a persistent corner marker appears on it -- for any cause, whether network failure, API errors or rate limiting, or refused authorization.** -- Archived 2026-11-11 ->
+  `context/archive/2026-11-10-staleness-marker-and-display-rule/`. Lesson: --.
