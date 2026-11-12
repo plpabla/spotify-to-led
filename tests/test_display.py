@@ -7,20 +7,32 @@ the test sets, so no download happens. The sleep records each delay instead
 of waiting, and the scripted last one ends `run_display` the way shutdown
 does, by raising `CancelledError`. The clock stands still at `NOW`; how long
 reads have been failing is set through each snapshot's `failure_since`.
+
+A flip of the owner's AI-enhancement switch is followed through to the board
+with the real loader, cache and enhancer instead, over a scripted network
+that also stands in for OpenRouter, so no real request is ever made.
 """
 
 import asyncio
+import base64
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
 
+import httpx2
 import pytest
 from PIL import Image
 
 from spotify_to_led import frames
 from spotify_to_led.board.transport import LinkState
-from spotify_to_led.covers import PENDING, CoverState, CoverStatus
+from spotify_to_led.covers import GENERATING, PENDING, CoverLoader, CoverState, CoverStatus
+from spotify_to_led.enhance import Enhancer
+from spotify_to_led.frame_cache import FrameCache
+from spotify_to_led.owner_settings import OwnerSettings
+from spotify_to_led.rendering import render_cover, render_enhanced
 from spotify_to_led.display import (
     IDLE,
     NO_ARTWORK,
@@ -841,3 +853,275 @@ async def test_without_a_loader_an_item_with_artwork_shows_the_placeholder() -> 
     await run_until_out_of_sleeps(board, scripted(playing(A_URL)), FakeSleep(sleeps=1))
 
     assert board.drawn == ["placeholder"]
+
+
+# --- enhanced covers ------------------------------------------------------
+
+ENHANCED_A = Image.new("RGB", (SIZE, SIZE), (250, 250, 0))
+READY_A_ENHANCED = CoverState(CoverStatus.READY, ENHANCED_A, enhanced=True)
+
+
+def enhanced(url: str, stale: bool = False) -> Presentation:
+    return Presentation(PresentationKind.COVER, url, stale, enhanced=True)
+
+
+def test_a_cover_being_generated_selects_the_placeholder() -> None:
+    # Not the changeover's kept presentation: a generation takes seconds.
+    chosen = select_presentation(playing(A_URL), (A_URL, GENERATING), cover(A_URL), NOW)
+
+    assert chosen == PLACEHOLDER
+
+
+@pytest.mark.parametrize(("failing_for", "stale"), [(None, False), (29, False), (31, True)])
+def test_a_ready_enhanced_cover_is_selected_as_enhanced_and_marked_like_any(
+    failing_for: float | None, stale: bool
+) -> None:
+    snapshot = playing(A_URL, failing_for=failing_for)
+
+    chosen = select_presentation(snapshot, (A_URL, READY_A_ENHANCED), None, NOW)
+
+    assert chosen == enhanced(A_URL, stale)
+    # The same image, plain and enhanced, are different presentations.
+    assert chosen != cover(A_URL, stale)
+
+
+def test_an_enhanced_cover_says_so_in_the_log() -> None:
+    assert str(enhanced(A_URL)) == f"cover {A_URL} (enhanced)"
+    assert str(enhanced(A_URL, stale=True)) == f"cover {A_URL} (enhanced) (stale)"
+
+
+class EnhancingFakeCovers(FakeCovers):
+    """A `FakeCovers` that also records the source each sample wanted to enhance from."""
+
+    def __init__(self, states: dict[str, CoverState] | None = None) -> None:
+        super().__init__(states)
+        self.sources: list[str | None] = []
+
+    def want(self, url: str | None, *, enhance_from: str | None = None) -> None:
+        super().want(url)
+        self.sources.append(enhance_from)
+
+
+class Switch:
+    """The owner's saved choice, which a test flips between samples."""
+
+    def __init__(self, on: bool) -> None:
+        self.settings = OwnerSettings(ai_enhanced=on)
+
+    def __call__(self) -> OwnerSettings:
+        return self.settings
+
+    def flip(self, on: bool) -> None:
+        self.settings = OwnerSettings(ai_enhanced=on)
+
+
+def an_album(small: str, wide: str) -> PlaybackSnapshot:
+    """A track whose artwork is listed widest first, as Spotify does."""
+    artwork = (Artwork(url=wide, width=640, height=640), Artwork(url=small, width=64, height=64))
+    track = PlayingItem(kind="track", id=small, name="A Track", subtitle=None, artwork=artwork)
+    return replace(INITIAL_SNAPSHOT, status=PlaybackStatus.PLAYING, item=track)
+
+
+async def test_with_the_switch_on_the_widest_image_is_the_source_and_off_there_is_none() -> None:
+    switch = Switch(on=True)
+    covers = EnhancingFakeCovers()
+    album = an_album(A_URL, B_URL)
+    sleep = ActingSleep(sleeps=3, actions={1: lambda: switch.flip(False)})
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_display(
+            FakeBoard(),
+            SIZE,
+            scripted(album, album, NOTHING),
+            covers=covers,
+            owner_settings=switch,
+            clock=lambda: NOW,
+            sleep=sleep,
+        )
+
+    assert covers.wanted == [A_URL, A_URL, None]
+    assert covers.sources == [B_URL, None, None]
+
+
+async def test_a_stale_enhanced_cover_carries_the_marker() -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A_ENHANCED})
+    current = scripted(playing(A_URL), playing(A_URL, failing_for=31), playing(A_URL))
+
+    await run_until_out_of_sleeps(board, current, FakeSleep(sleeps=3), covers)
+
+    pushed = [frame.tobytes() for frame in board.pushed]
+    assert pushed == [
+        ENHANCED_A.tobytes(),
+        frames.with_stale_marker(ENHANCED_A).tobytes(),
+        ENHANCED_A.tobytes(),
+    ]
+
+
+# The loop driven with a real loader, cache and enhancer over a scripted
+# network, so a flip of the switch is followed through to the board.
+A_SMALL = "https://i.scdn.co/image/ab67616d00004851aaaa"
+A_WIDE = "https://i.scdn.co/image/ab67616d0000b273aaaa"
+B_SMALL = "https://i.scdn.co/image/ab67616d00004851bbbb"
+B_WIDE = "https://i.scdn.co/image/ab67616d0000b273bbbb"
+
+
+def _png(colour: tuple[int, int, int], side: int) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (side, side), colour).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+SOURCE_PNG = _png((200, 40, 90), 64)
+GENERATED_PNG = _png((250, 250, 0), 128)
+PLAIN_FRAME = render_cover(Image.open(BytesIO(SOURCE_PNG)), SIZE)
+ENHANCED_FRAME = render_enhanced(Image.open(BytesIO(GENERATED_PNG)), SIZE)
+
+
+class ScriptedNetwork:
+    """Answers every image GET with the source PNG, and OpenRouter from a script."""
+
+    def __init__(self, generations: list[httpx2.Response] | None = None) -> None:
+        self.generations = list(generations or [])
+        self.image_urls: list[str] = []
+        self.openrouter_requests = 0
+
+    async def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == "openrouter.ai":
+            self.openrouter_requests += 1
+            assert self.generations, "unscripted request to OpenRouter"
+            return self.generations.pop(0)
+        self.image_urls.append(str(request.url))
+        return httpx2.Response(200, content=SOURCE_PNG)
+
+
+def a_generation() -> httpx2.Response:
+    encoded = base64.b64encode(GENERATED_PNG).decode("ascii")
+    return httpx2.Response(200, json={"data": [{"b64_json": encoded}], "usage": {"cost": 0.009}})
+
+
+def a_real_loader(network: ScriptedNetwork, root: Path) -> CoverLoader:
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(network))
+
+    async def no_wait(seconds: float) -> None:
+        return None
+
+    enhancer = Enhancer(client, "sk-or-v1-test-key", "a/model", SIZE, sleep=no_wait)
+    return CoverLoader(client, SIZE, cache=FrameCache(root, SIZE), enhancer=enhancer)
+
+
+class WaitingSleep:
+    """Before the `n`-th sample's sleep returns, runs `actions[n]`, which may wait.
+
+    Each sleep also yields to the loader's task; the `sleeps`-th ends the loop.
+    """
+
+    def __init__(
+        self, sleeps: int, actions: dict[int, Callable[[], Awaitable[None] | None]]
+    ) -> None:
+        self.sleeps = sleeps
+        self.actions = actions
+        self.count = 0
+
+    async def __call__(self, seconds: float) -> None:
+        self.count += 1
+        action = self.actions.get(self.count)
+        if action is not None:
+            result = action()
+            if result is not None:
+                await result
+        await asyncio.sleep(0)
+        if self.count >= self.sleeps:
+            raise asyncio.CancelledError
+
+
+async def until(condition: Callable[[], bool]) -> None:
+    for _ in range(500):
+        if condition():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the condition never held")
+
+
+def frames_named(board: FakeBoard) -> list[str]:
+    names = {
+        PLAIN_FRAME.tobytes(): "plain",
+        ENHANCED_FRAME.tobytes(): "enhanced",
+        frames.playing_placeholder(SIZE).tobytes(): "placeholder",
+    }
+    return [names[frame.tobytes()] for frame in board.pushed]
+
+
+async def test_flipping_the_switch_redraws_the_current_item_both_ways(tmp_path: Path) -> None:
+    # The plain cover is up, from the cache; on generates (placeholder, then
+    # enhanced), off goes back to plain with no download, and on again is
+    # the enhanced frame from the cache.
+    FrameCache(tmp_path, SIZE).store(A_SMALL, PLAIN_FRAME)
+    network = ScriptedNetwork([a_generation()])
+    loader = a_real_loader(network, tmp_path)
+    switch = Switch(on=False)
+    board = FakeBoard()
+
+    def generated() -> bool:
+        return loader.state(A_SMALL).enhanced
+
+    sleep = WaitingSleep(
+        sleeps=7,
+        actions={
+            2: lambda: switch.flip(True),
+            # The generation is let finish before the next sample.
+            3: lambda: until(generated),
+            4: lambda: switch.flip(False),
+            6: lambda: switch.flip(True),
+        },
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_display(
+            board,
+            SIZE,
+            lambda: an_album(A_SMALL, A_WIDE),
+            covers=loader,
+            owner_settings=switch,
+            clock=lambda: NOW,
+            sleep=sleep,
+        )
+    await loader.aclose()
+
+    assert frames_named(board) == ["plain", "placeholder", "enhanced", "plain", "enhanced"]
+    # The source download and one generation: the plain frame was never
+    # downloaded, and nothing was generated twice.
+    assert network.image_urls == [A_WIDE]
+    assert network.openrouter_requests == 1
+
+
+async def test_with_the_switch_off_no_request_reaches_openrouter(tmp_path: Path) -> None:
+    network = ScriptedNetwork()
+    loader = a_real_loader(network, tmp_path)
+    board = FakeBoard()
+    album_a, album_b = an_album(A_SMALL, A_WIDE), an_album(B_SMALL, B_WIDE)
+    snapshots = iter([album_a, album_a, album_a, album_b, album_b, album_b])
+    sleep = WaitingSleep(
+        sleeps=6,
+        actions={
+            1: lambda: until(lambda: loader.state(A_SMALL).status is CoverStatus.READY),
+            4: lambda: until(lambda: loader.state(B_SMALL).status is CoverStatus.READY),
+        },
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_display(
+            board,
+            SIZE,
+            lambda: next(snapshots),
+            covers=loader,
+            owner_settings=Switch(on=False),
+            clock=lambda: NOW,
+            sleep=sleep,
+        )
+    await loader.aclose()
+
+    assert network.image_urls == [A_SMALL, B_SMALL]
+    assert network.openrouter_requests == 0
+    # Nothing chosen before A's first download, so the placeholder first.
+    assert frames_named(board) == ["placeholder", "plain", "plain"]

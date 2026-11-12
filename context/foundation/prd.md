@@ -1,6 +1,6 @@
 ---
 project: "spotify-to-led"
-version: 1
+version: 2
 status: draft
 created: 2026-11-02
 context_type: greenfield
@@ -200,6 +200,14 @@ Each FR carries a `> Socratic:` blockquote recording the counter-argument consid
   > Socratic: Counter-arguments considered: the board still lies for the first 30 seconds, since a track change during the grace period shows the wrong album with no marker at all, which time-boxes the wrong-but-confident failure rather than removing it; a few corner pixels are invisible during the ambient desk glance that is the actual viewing situation; and one marker for three causes discards the distinction that matters, since a blip, a rate-limit and a dead login demand different responses and only the web page separates them. Resolution: stands as written, must-have.
   > Decided 2026-11-10 (S-06, Open Question 2): the marker is no longer confined to "the last shown cover". The same marker, at the same full brightness and after the same 30-second grace, goes on whatever the board shows, including idle, the playing placeholder and the no-artwork symbol; it clears every one of those glyphs at every supported board size. Plain idle with Spotify not configured is never stale.
 
+- FR-019: Owner can switch on, from the local web page, an AI step that redraws each playing cover as a frame designed for the board, and switch it off again; the choice survives restarts. Priority: should-have
+
+  > Added 2026-11-11 (PRD v2, roadmap S-08, M-2). The step sends the cover to a hosted image model through OpenRouter (`black-forest-labs/flux-3-image-klein` by default, about $0.009 per image) with a prompt asking for one recognisable subject as bold pixel art on black, and shrinks the answer to the board with a LANCZOS downscale. Switched off, the service makes no OpenRouter request at all. Each image is generated at most once: the enhanced frame is kept beside the plain one (FR-017), so a repeat, including after a restart, needs no request.
+  > While a never-seen cover generates, the board shows the playing placeholder, then the enhanced frame; a generation that fails falls back to the plain cover, and a refusal for credit or key (the owner's key carries a daily limit) pauses all generation until the next 00:00 UTC. Switching the step either way redraws the current item. FR-018's marker applies to an enhanced cover exactly as to a plain one.
+  > Accepted cost (implementation review, 2026-11-11): a generation abandoned midway, because the item changed or the step was switched off, may still be billed by OpenRouter, and nothing is cached from it, so the next sighting of that cover pays again; a call that times out (90 s) is retried, so one image costs at most three calls per sighting.
+  > Acceptance bar (board bake-off, 2026-11-11, see `context/changes/ai-enhanced-covers/verification.md`): from normal desk viewing distance, every enhanced cover in the bake-off set reads better than its plain downscale. Text on the cover is acceptable when it is the cover's main subject.
+  > The cover leaves the Pi in this step. Covers are public images; the Spotify refresh credential still never leaves the device.
+
 ### Board link
 
 - FR-012: Service can connect to the board over Bluetooth. Priority: must-have
@@ -227,6 +235,7 @@ Each FR carries a `> Socratic:` blockquote recording the counter-argument consid
 ## Non-Functional Requirements
 
 - Within 5 seconds of the playing item changing on the account, the board shows the state that corresponds to the new item.
+  With FR-019 switched on, the playing placeholder is that state while a never-seen cover generates (about 9 s on the Pi, measured 2026-11-11); the enhanced frame follows when it is ready.
 - The service operates for at least 7 consecutive days with no human intervention and no degradation in the above timing.
 
 Verification consequence of the second property: seven consecutive days can only be observed by leaving a real build running on the Pi for a week. Against the three-week budget in the frontmatter, that means the Pi has to be running something real well before the final week, or the property goes unproven. This is a sequencing constraint for the roadmap step, not an additional requirement.
@@ -283,7 +292,8 @@ Functional non-goals:
 - **Anyone else's board or account.** No hosted service, no installable release for other iDotMatrix owners, no multi-account support. Single-tenant by choice -- and structurally forced: Bluetooth requires the service to run physically next to its own board, so a centralized version cannot exist.
 - **Controlling playback.** The product is strictly read-only against the Spotify account. No play, pause, skip or volume from the board or the web page. This also rules out a whole category of authorization scope.
 - **Sources other than Spotify.** No Apple Music, no local files, no system-audio detection, no scrobbling services. One source only.
-- **AI-enhanced and animated covers, in v1.** The owner intends both later, and FR-017 exists partly to prepare for them. Neither is in v1: the v1 board shows one static frame per item, derived from the artwork Spotify returns. Ruled out now so the rendering work in v1 stays small.
+- **Animated covers.** The owner intends them later, and FR-017 exists partly to prepare for them. The board shows one static frame per item, derived from the artwork Spotify returns.
+  Narrowed 2026-11-11 (PRD v2): this Non-Goal read "AI-enhanced and animated covers, in v1". AI-enhanced covers are now FR-019, off unless the owner switches them on; animation stays out.
 
 Non-functional non-goals:
 
@@ -294,7 +304,7 @@ Non-functional non-goals:
 
 Explicitly NOT a non-goal, recorded so it is not mistaken for one:
 
-- **Animation, visualizers and scrolling text** were offered as a non-goal and declined. Nothing in the v1 FR set needs them -- the display is one static frame at a time -- but they are not ruled out for later. The AI-enhanced and animated rendering the owner plans is the separate functional non-goal above: out of v1, intended afterwards.
+- **Animation, visualizers and scrolling text** were offered as a non-goal and declined. Nothing in the v1 FR set needs them -- the display is one static frame at a time -- but they are not ruled out for later. Animated covers are the separate functional non-goal above; AI-enhanced covers are FR-019.
 
 ## Open Questions
 

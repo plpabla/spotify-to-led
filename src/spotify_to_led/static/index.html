@@ -27,6 +27,7 @@
   <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
   <section id="reading"><h2>Reading Spotify</h2></section>
   <section id="board"><h2>Board</h2></section>
+  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><p id="enhance-note" class="muted"></p></section>
   <section id="authorization" hidden><h2>Spotify authorization</h2></section>
 </div>
 <script>
@@ -134,11 +135,89 @@ function renderBoard(data) {
     parts.push(el("p", "Nothing sent yet.", "muted"));
   } else {
     parts.push(el("p", "Last sent: " + (KINDS[presentation.kind] || presentation.kind)
+      + (presentation.enhanced ? " (AI-enhanced)" : "")
       + (presentation.stale ? ", marked stale." : ", not marked.")));
     if (board.push_failed) parts.push(el("p", "That push failed; it is being retried.", "bad"));
   }
   fill("board", "Board", ...parts);
 }
+
+// The checkbox is kept, not rebuilt, so a click is never lost to a poll. A
+// poll that began before the latest change may carry the old value, so it
+// leaves the checkbox alone; the next poll shows what was saved.
+let enhanceChanges = 0;
+let enhanceSaving = false;
+let enhanceError = null;
+
+function renderEnhancement(data, changesAtFetch) {
+  const enhancement = data.enhancement;
+  const toggle = document.getElementById("enhance-toggle");
+  const note = document.getElementById("enhance-note");
+  if (!enhanceSaving && changesAtFetch === enhanceChanges) {
+    toggle.checked = enhancement.enabled;
+    toggle.disabled = !enhancement.available;
+  }
+  if (enhanceError) {
+    note.textContent = enhanceError;
+    note.className = "bad";
+  } else if (!enhancement.available) {
+    note.textContent = "Unavailable: no OpenRouter key is configured (OPENROUTER_API_KEY).";
+    note.className = "muted";
+  } else {
+    note.textContent = "";
+    note.className = "muted";
+  }
+  document.getElementById("enhance-cover").textContent = enhancementCoverLine(enhancement);
+}
+
+// One line for what enhancement made of the current cover, and the pause,
+// which applies whether or not a cover is on show.
+function enhancementCoverLine(enhancement) {
+  const paused = enhancement.paused_until
+    ? "generation is paused until " + when(enhancement.paused_until) + " (OpenRouter refused the key or its credit)"
+    : null;
+  switch (enhancement.cover) {
+    case "enhanced":
+      return "Current cover: AI-enhanced." + (paused ? " New covers stay plain: " + paused + "." : "");
+    case "generating":
+      return "Current cover: generating the enhanced version; the board shows the placeholder meanwhile.";
+    case "gave_up":
+      return "Current cover: plain, after generating its enhanced version failed. Switch off and on to try again."
+        + (paused ? " Also, " + paused + "." : "");
+    case "plain":
+      return paused ? "Current cover: plain, because " + paused + "." : "Current cover: plain.";
+    default:
+      return paused ? "AI " + paused + "." : "";
+  }
+}
+
+document.getElementById("enhance-toggle").addEventListener("change", async (event) => {
+  const toggle = event.target;
+  enhanceChanges += 1;
+  enhanceSaving = true;
+  enhanceError = null;
+  toggle.disabled = true;
+  try {
+    const response = await fetch("/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ai_enhanced: toggle.checked }),
+    });
+    if (!response.ok) throw new Error("status " + response.status);
+  } catch (error) {
+    // The next poll puts the checkbox back to the saved setting.
+    enhanceError = "The change could not be saved.";
+    const note = document.getElementById("enhance-note");
+    note.textContent = enhanceError;
+    note.className = "bad";
+  } finally {
+    // Again on the way out: a poll sent while the change was in flight may
+    // have been answered before it was saved.
+    enhanceChanges += 1;
+    enhanceSaving = false;
+    toggle.disabled = false;
+  }
+});
 
 function renderAuthorization(data) {
   const section = document.getElementById("authorization");
@@ -171,6 +250,7 @@ function renderAuthorization(data) {
 
 async function refresh() {
   try {
+    const changesAtFetch = enhanceChanges;
     const response = await fetch("/status", { cache: "no-store" });
     if (!response.ok) throw new Error("status " + response.status);
     const data = await response.json();
@@ -178,6 +258,7 @@ async function refresh() {
     renderPlayback(data);
     renderReading(data, now);
     renderBoard(data);
+    renderEnhancement(data, changesAtFetch);
     renderAuthorization(data);
     document.getElementById("unreachable").hidden = true;
     document.getElementById("sections").hidden = false;

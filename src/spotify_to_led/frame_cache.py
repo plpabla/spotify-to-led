@@ -13,8 +13,17 @@ drawn for one size: a 64 px board must not be handed a 32 px cache's frames,
 and switching sizes leaves the other directory intact for switching back. The
 renderer is not in the path, so a change to how covers are rendered means a
 new directory or a wiped cache; FR-017 accepts that, since every entry can be
-downloaded again. A variant of the same image, such as an AI-enhanced frame,
-would get a suffix after the id, which the id's alphabet leaves room for.
+downloaded again.
+
+An image can have a second entry: its AI-enhanced frame (FR-019), stored
+beside the plain one as `<root>/<size>/<id>.ai.png`. The suffix comes after
+the id, which the id's alphabet leaves room for, so the two can never name
+the same file, and the plain entries written before enhancement existed stay
+valid as they are. The two are independent: switching enhancement off finds
+the plain entry, and switching it on again finds the enhanced one, so a cover
+is generated at most once, even across restarts. Unlike a plain entry, an
+enhanced one cannot be had again for the price of a download: losing it costs
+a paid generation.
 
 The cache is unbounded: one entry is a few kilobytes, so even years of
 listening stay small next to the Pi's storage. It is never fatal to the
@@ -47,15 +56,15 @@ def image_id(url: str) -> str | None:
 
 
 class FrameCache:
-    """Rendered `size` px frames on disk under `root`, one per Spotify image id."""
+    """Rendered `size` px frames on disk under `root`, plain and enhanced, per Spotify image id."""
 
     def __init__(self, root: Path, size: int) -> None:
         self._directory = root / str(size)
         self._size = size
 
-    def load(self, url: str) -> Image.Image | None:
-        """The cached frame for `url`, or `None` on a miss of any kind."""
-        path = self._path(url)
+    def load(self, url: str, *, enhanced: bool = False) -> Image.Image | None:
+        """The cached plain or enhanced frame for `url`, or `None` on a miss of any kind."""
+        path = self._path(url, enhanced)
         if path is None:
             return None
         try:
@@ -86,9 +95,9 @@ class FrameCache:
             )
             return None
 
-    def store(self, url: str, frame: Image.Image) -> None:
-        """Keep `frame` as the entry for `url`; a URL without an id is not kept."""
-        path = self._path(url)
+    def store(self, url: str, frame: Image.Image, *, enhanced: bool = False) -> None:
+        """Keep `frame` as `url`'s plain or enhanced entry; a URL without an id is not kept."""
+        path = self._path(url, enhanced)
         if path is None:
             return
         # Same directory as the entry, or `os.replace` would not be atomic.
@@ -114,6 +123,8 @@ class FrameCache:
                 type(error).__name__,
             )
 
-    def _path(self, url: str) -> Path | None:
+    def _path(self, url: str, enhanced: bool) -> Path | None:
         found = image_id(url)
-        return self._directory / f"{found}.png" if found is not None else None
+        if found is None:
+            return None
+        return self._directory / (f"{found}.ai.png" if enhanced else f"{found}.png")

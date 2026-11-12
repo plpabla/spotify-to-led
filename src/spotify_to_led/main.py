@@ -17,9 +17,21 @@ cover seen before, even before a restart, is shown without a download. A
 cover is marked once reads have been failing for over 30 s. It pushes again
 whenever that choice changes or the link comes back.
 
+With an OpenRouter key and Spotify both configured, the loader also gets an
+`Enhancer` on the same client, and the display reads the owner's switch on
+every sample: switched on, covers are redrawn by an image model (FR-019),
+each image once, kept beside its plain frame in the cache. Switched off, or
+without a key, no OpenRouter request is made.
+
 The status page at `/` is static and renders `/status`, which reports the
 believed playback, the authorization and the board link, including the case
 where the display task has ended, so a board fault is explained, not hidden.
+It also reports what enhancement is doing: whether the current cover is
+enhanced, plain, being generated or plain after a give-up, and until when
+generation is paused after a refusal. Its one control, the AI-enhanced covers checkbox, writes through
+`PUT /settings`, which keeps the owner's choice in `OWNER_SETTINGS_FILE` so it
+survives a restart. A change of it also makes the enhancer forget the images
+it gave up on, so switching off and on is how the owner asks for another try.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
@@ -41,13 +53,23 @@ import httpx2
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from pydantic import BaseModel, ConfigDict, StrictBool
 
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.transport import BoardTransport, LinkState
 from spotify_to_led.config import load_settings
-from spotify_to_led.covers import CoverLoader
-from spotify_to_led.display import STALE_AFTER_SECONDS, DisplayStatus, is_stale, run_display
+from spotify_to_led.covers import CoverLoader, CoverStatus
+from spotify_to_led.display import (
+    STALE_AFTER_SECONDS,
+    DisplayStatus,
+    enhancement_source_url,
+    is_stale,
+    run_display,
+    wanted_cover_url,
+)
+from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
+from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
 from spotify_to_led.spotify.reader import AuthorizationStateMismatch, SpotifyReader
@@ -115,20 +137,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = load_settings()
     configure_logging(settings.log_level)
     transport = create_transport(settings)
+    # A broken file loads as the defaults, so this cannot stop the service.
+    owner_settings_store = OwnerSettingsStore(settings.owner_settings_file)
+    app.state.owner_settings_store = owner_settings_store
+    app.state.owner_settings = owner_settings_store.load()
+    app.state.enhance_available = settings.enhance_available
 
     spotify_client: httpx2.AsyncClient | None = None
     reader: SpotifyReader | None = None
     reader_task: asyncio.Task[None] | None = None
     covers: CoverLoader | None = None
+    enhancer: Enhancer | None = None
     app.state.spotify_reader = None
     if settings.spotify_enabled:
         spotify_client = create_spotify_client()
         reader = SpotifyReader(spotify_client, settings, TokenStore(settings.spotify_token_file))
         app.state.spotify_reader = reader
+        if settings.openrouter_api_key is not None:
+            # The shared client carries no headers of its own; the key goes
+            # on each OpenRouter request and nowhere else.
+            enhancer = Enhancer(
+                spotify_client,
+                settings.openrouter_api_key.get_secret_value(),
+                settings.openrouter_model,
+                settings.board_size,
+            )
         covers = CoverLoader(
             spotify_client,
             settings.board_size,
             cache=FrameCache(settings.cover_cache_dir, settings.board_size),
+            enhancer=enhancer,
         )
         # `run()` classifies and logs its own failures, so like the display
         # task it cannot take the server down.
@@ -140,10 +178,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # `None` without a reader, which the display rule shows as idle.
         return reader.snapshot if reader is not None else None
 
+    def owner_settings() -> OwnerSettings:
+        # Read on every sample, so a change from the page is acted on at once.
+        return app.state.owner_settings
+
+    # For `PUT /settings`, which tells it when the switch changes, and for
+    # `/status`, which reports its pause and, with the loader, the cover's state.
+    app.state.enhancer = enhancer
+    app.state.covers = covers
+    app.state.board_size = settings.board_size
     # Started after the reader exists, because `current` closes over it.
     display_status = DisplayStatus()
     task = asyncio.create_task(
-        run_display(transport, settings.board_size, current, covers=covers, status=display_status)
+        run_display(
+            transport,
+            settings.board_size,
+            current,
+            covers=covers,
+            # Only with an enhancer: without one, the switch has nothing to switch.
+            owner_settings=owner_settings if enhancer is not None else None,
+            status=display_status,
+        )
     )
     # For `/status`, which reports the board without reaching into the loop.
     app.state.transport = transport
@@ -269,7 +324,7 @@ async def status(request: Request) -> dict[str, Any]:
     The fields are named one by one rather than dumped from the reader or the
     loop, so no token can reach this response by a field added elsewhere.
     `playback` and `authorization` are `null` when Spotify is not configured;
-    the board is reported either way.
+    the board and enhancement are reported either way.
     """
     reader = _reader(request)
     snapshot = reader.snapshot if reader is not None else None
@@ -284,9 +339,127 @@ async def status(request: Request) -> dict[str, Any]:
             request.app.state.display_task,
             request.app.state.display_status,
         ),
+        "enhancement": _enhancement_json(request, snapshot),
         "stale_after_seconds": STALE_AFTER_SECONDS,
         "now": now,
     }
+
+
+class SettingsChange(BaseModel):
+    """The body of `PUT /settings`: exactly one strict boolean, nothing else."""
+
+    # A misspelt field is refused rather than silently dropped, and
+    # `StrictBool` refuses `"false"` or `0` rather than coercing them.
+    model_config = ConfigDict(extra="forbid")
+
+    ai_enhanced: StrictBool
+
+
+@app.put("/settings", response_model=None)
+async def put_settings(request: Request, change: SettingsChange) -> dict[str, bool] | Response:
+    """Save the owner's choices and answer with what was saved.
+
+    Ungated like every route: the only gate is Cloudflare Access at the edge.
+    A cross-site page can still post here without a CORS preflight if it
+    sends `text/plain` or a form, and this route will spend money, so only an
+    `application/json` body is accepted. FastAPI's default strict content
+    type already refuses any other body, or one with no content type, with a
+    422 before this runs; `tests/test_app.py` holds it to that.
+    """
+    if change.ai_enhanced and not request.app.state.enhance_available:
+        return PlainTextResponse(
+            "AI-enhanced covers need an OpenRouter key (OPENROUTER_API_KEY), "
+            "and none is configured.",
+            status_code=409,
+        )
+    previous: OwnerSettings = request.app.state.owner_settings
+    updated = OwnerSettings(ai_enhanced=change.ai_enhanced)
+    try:
+        request.app.state.owner_settings_store.save(updated)
+    except OSError as failure:
+        # The in-memory choice follows the file, never runs ahead of it, so a
+        # restart cannot quietly undo what the page showed as saved.
+        logger.warning("saving the owner settings failed (%s)", type(failure).__name__)
+        return PlainTextResponse("The setting could not be saved.", status_code=500)
+    request.app.state.owner_settings = updated
+    enhancer: Enhancer | None = request.app.state.enhancer
+    if enhancer is not None and updated != previous:
+        # A flip is the owner's way to ask again for the covers given up on.
+        enhancer.forget()
+    return {"ai_enhanced": updated.ai_enhanced}
+
+
+def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> dict[str, Any]:
+    available: bool = request.app.state.enhance_available
+    saved: OwnerSettings = request.app.state.owner_settings
+    # A choice saved while a key was configured does not count once the key
+    # is gone: without one the service never enhances.
+    enabled = saved.ai_enhanced and available
+    enhancer: Enhancer | None = request.app.state.enhancer
+    return {
+        "available": available,
+        "enabled": enabled,
+        # Reported switched on or off, cover or none: the pause is about the
+        # key and its credit, and lasts whatever is playing.
+        "paused_until": enhancer.paused_until if enhancer is not None else None,
+        "cover": (
+            _enhanced_cover(
+                snapshot, request.app.state.covers, enhancer, request.app.state.board_size
+            )
+            if enabled
+            else None
+        ),
+    }
+
+
+def _enhanced_cover(
+    snapshot: PlaybackSnapshot | None,
+    covers: CoverLoader | None,
+    enhancer: Enhancer | None,
+    size: int,
+) -> str | None:
+    """What enhancement has made of the cover now wanted, for `/status`'s `cover`.
+
+    Read from the loader's state, the same state the display rule chooses
+    from, and never by wanting anything: a poll must not start a download or
+    a generation. One of:
+
+    - `None` when no cover is wanted (nothing playing, an item with no
+      artwork, no loader), or when its plain frame is not on hand yet (the
+      loader `PENDING` or `FAILED`). Then the board shows no form of this
+      cover, and enhancement has not begun, so there is nothing to say yet.
+      Calling a pending cover "plain" would make a new item read plain, then
+      generating, then enhanced, as if it had fallen back first.
+    - `"generating"` while the enhanced frame is made; the board shows the
+      placeholder.
+    - `"enhanced"` when the board's cover is the enhanced frame.
+    - `"gave_up"` for a plain cover whose source image the enhancer gave up
+      on; switching off and on asks again.
+    - `"plain"` for any other plain cover: generation is paused (which
+      `paused_until` explains), the source image could not be downloaded, or
+      a switch just turned on has not reached the display's next sample.
+
+    Only asked when enhancement is enabled, so plain here always means "not
+    enhanced although it was asked to be".
+    """
+    if covers is None:
+        return None
+    # The display's own choice of URL, so this asks about the cover it wants.
+    url = wanted_cover_url(snapshot, size)
+    if url is None:
+        return None
+    state = covers.state(url)
+    if state.status is CoverStatus.GENERATING:
+        return "generating"
+    if state.status is not CoverStatus.READY:
+        return None
+    if state.enhanced:
+        return "enhanced"
+    # The give-up memory is keyed by the image enhanced from, not the URL wanted.
+    source = enhancement_source_url(snapshot)
+    if enhancer is not None and source is not None and enhancer.gave_up(source):
+        return "gave_up"
+    return "plain"
 
 
 def _playback_json(snapshot: PlaybackSnapshot, now: datetime) -> dict[str, Any]:
@@ -324,7 +497,12 @@ def _board_json(
         "link": link,
         "task_running": running,
         "presentation": (
-            {"kind": presentation.kind, "url": presentation.url, "stale": presentation.stale}
+            {
+                "kind": presentation.kind,
+                "url": presentation.url,
+                "stale": presentation.stale,
+                "enhanced": presentation.enhanced,
+            }
             if presentation is not None
             else None
         ),

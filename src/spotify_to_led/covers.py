@@ -27,12 +27,37 @@ there first, and a hit is `READY` before `want` returns, with no task and no
 download, so the display shows it on the same sample. Every cover rendered
 after a download is stored there.
 
+With an `Enhancer`, the display can also name an image to enhance the cover
+from (FR-019): the item's widest, since the model draws from it, while the
+URL wanted stays the small one the plain frame comes from and the one the
+cache entries are named by. What is wanted is then the pair, and the same URL
+wanted with a source, or without one, is a change like any other. An
+enhanced cover goes:
+
+- `READY`, enhanced, before `want` returns, when the cache holds its
+  enhanced frame. No request is made of anyone.
+- Otherwise `PENDING` while the plain frame is fetched, from the cache or by
+  a download retried as above, and stored as usual. The plain frame comes
+  first so that there is always one to fall back on, and so that switching
+  enhancement off is answered at once, from memory or the cache.
+- Then `GENERATING`, while the source is downloaded and the enhancer runs,
+  which takes seconds, or a minute or more through its retries.
+- Then `READY`: enhanced on success, when the frame is also stored as the
+  image's enhanced entry, or plain when the enhancer answers `None` or the
+  source cannot be downloaded. An image the enhancer has given up on, or any
+  image while generation is paused, is `READY` plain at once, with no source
+  download and no request.
+
+A generation is cancelled like a download when something else is wanted, and
+its frame is stored only if its cover is still wanted, enhanced.
+
 The log lines say what happened to a cover, and nothing but the URL
 identifies it: INFO when a cover is ready, saying so when it came from the
 cache, a WARNING per failed attempt with its cause and the wait, with a
-traceback only on the first failure of a URL.
-The shared client is the Spotify client, but a cover request carries no
-headers of its own, so no token goes to the image CDN or into these lines.
+traceback only on the first failure of a URL. The enhancer logs its own
+outcomes. The shared client is the Spotify client, but a cover request
+carries no headers of its own, so no token goes to the image CDN or into
+these lines.
 """
 
 import asyncio
@@ -46,6 +71,7 @@ from io import BytesIO
 import httpx2
 from PIL import Image
 
+from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.rendering import render_cover
 from spotify_to_led.spotify.playback import Artwork, PlayingItem
@@ -75,24 +101,41 @@ class CoverStatus(StrEnum):
     """How far the wanted cover has got."""
 
     PENDING = "pending"
+    # The plain frame is in hand and the enhanced one is being made.
+    GENERATING = "generating"
     READY = "ready"
     FAILED = "failed"
 
 
 @dataclass(frozen=True)
 class CoverState:
-    """The state of one cover; `frame` is the rendered cover, set only when `READY`."""
+    """The state of one cover; `frame` is the rendered cover, set only when `READY`.
+
+    `enhanced` says whether that frame is the AI-enhanced one, so it is only
+    ever true when `READY`.
+    """
 
     status: CoverStatus
     frame: Image.Image | None = None
+    enhanced: bool = False
 
 
 PENDING = CoverState(CoverStatus.PENDING)
+GENERATING = CoverState(CoverStatus.GENERATING)
 FAILED = CoverState(CoverStatus.FAILED)
 
 
 class CoverFetchError(Exception):
     """The image server answered, but not with an image to use."""
+
+
+@dataclass(frozen=True)
+class DownloadedImage:
+    """A downloaded image, decoded, with the bytes it came as and their type."""
+
+    image: Image.Image
+    data: bytes
+    mime: str
 
 
 def select_artwork(item: PlayingItem | None, size: int) -> Artwork | None:
@@ -113,8 +156,8 @@ def select_artwork(item: PlayingItem | None, size: int) -> Artwork | None:
     return item.artwork[0]
 
 
-async def fetch_cover(client: httpx2.AsyncClient, url: str, size: int) -> Image.Image:
-    """Download the image at `url` and render it as a `size` px board frame.
+async def download_image(client: httpx2.AsyncClient, url: str) -> DownloadedImage:
+    """Download and decode the image at `url`, within the limits set for a cover.
 
     Raises on a transport error or timeout, a non-2xx status, or a body that
     does not decode as an image.
@@ -129,17 +172,32 @@ async def fetch_cover(client: httpx2.AsyncClient, url: str, size: int) -> Image.
         raise CoverFetchError(f"HTTP {response.status_code}")
     if len(response.content) > MAX_COVER_BYTES:
         raise CoverFetchError(f"body of {len(response.content)} bytes")
-    with Image.open(BytesIO(response.content)) as image:
-        if image.width * image.height > MAX_COVER_PIXELS:
-            raise CoverFetchError(f"image of {image.width}x{image.height} pixels")
-        # `open` reads only the header; `load` decodes the rest, so a
-        # truncated body fails here rather than somewhere in the render.
-        image.load()
-        return render_cover(image, size)
+    image = Image.open(BytesIO(response.content))
+    if image.width * image.height > MAX_COVER_PIXELS:
+        raise CoverFetchError(f"image of {image.width}x{image.height} pixels")
+    # `open` reads only the header; `load` decodes the rest, so a truncated
+    # body fails here rather than somewhere in the render.
+    image.load()
+    # The type the bytes really are, whatever the server's header says, since
+    # it is what an enhancement declares them as.
+    mime = Image.MIME.get(image.format or "", "application/octet-stream")
+    return DownloadedImage(image, response.content, mime)
+
+
+async def fetch_cover(client: httpx2.AsyncClient, url: str, size: int) -> Image.Image:
+    """Download the image at `url` and render it as a `size` px board frame.
+
+    Raises as `download_image` does.
+    """
+    return render_cover((await download_image(client, url)).image, size)
 
 
 class CoverLoader:
-    """Downloads and renders the one cover the display wants, retrying failures."""
+    """Downloads and renders the one cover the display wants, retrying failures.
+
+    With an `enhancer`, it also makes the enhanced frame of a cover wanted
+    with a source to enhance from; without one, such a source is ignored.
+    """
 
     def __init__(
         self,
@@ -147,38 +205,65 @@ class CoverLoader:
         size: int,
         *,
         cache: FrameCache | None = None,
+        enhancer: Enhancer | None = None,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
         self._client = client
         self._size = size
         self._cache = cache
+        self._enhancer = enhancer
         self._sleep = sleep
         self._url: str | None = None
+        self._enhance_from: str | None = None
+        # The wanted URL's plain frame once it is in hand, so switching
+        # enhancement either way within one cover needs no download.
+        self._plain: Image.Image | None = None
         self._state = PENDING
         self._task: asyncio.Task[None] | None = None
 
-    def want(self, url: str | None) -> None:
-        """Make `url` the wanted cover, or want none; the same URL again is a no-op.
+    def want(self, url: str | None, *, enhance_from: str | None = None) -> None:
+        """Make `url` the wanted cover, or want none; the same wish again is a no-op.
 
-        Must be called from a running event loop, which runs the download.
+        `enhance_from`, when given, is the URL of the image to make `url`'s
+        enhanced frame from. Only the same URL with the same source is the
+        no-op. Must be called from a running event loop, which runs the
+        download.
         """
-        if url == self._url:
+        if self._enhancer is None:
+            enhance_from = None
+        if url == self._url and enhance_from == self._enhance_from:
             # Called on every display sample: restarting here would throw away
             # a download in flight, or a backoff that is meant to grow.
             return
+        plain = self._plain if url == self._url else None
         self._cancel()
         self._url = url
+        self._enhance_from = enhance_from
+        self._plain = plain
         self._state = PENDING
         if url is None:
             return
         # Read on the event loop: an entry is a few kilobytes, and answering
         # now is what lets the display show it on this very sample.
-        cached = self._cache.load(url) if self._cache is not None else None
-        if cached is not None:
-            self._state = CoverState(CoverStatus.READY, cached)
-            logger.info("cover ready from cache: %s", url)
-            return
-        self._task = asyncio.create_task(self._load(url))
+        if enhance_from is not None and self._cache is not None:
+            enhanced = self._cache.load(url, enhanced=True)
+            if enhanced is not None:
+                self._state = CoverState(CoverStatus.READY, enhanced, enhanced=True)
+                logger.info("enhanced cover ready from cache: %s", url)
+                return
+        if plain is None and self._cache is not None:
+            plain = self._cache.load(url)
+            if plain is not None:
+                self._plain = plain
+                logger.info("cover ready from cache: %s", url)
+        if plain is not None:
+            if not self._will_enhance(enhance_from):
+                self._state = CoverState(CoverStatus.READY, plain)
+                return
+            # The plain frame is in hand, so generation is all that is left,
+            # and the display shows the placeholder from this very sample.
+            self._state = GENERATING
+        self._task = asyncio.create_task(self._load(url, enhance_from, plain))
 
     def state(self, url: str) -> CoverState:
         """The state of `url`: pending unless it is the wanted cover."""
@@ -189,6 +274,8 @@ class CoverLoader:
         task = self._task
         self._cancel()
         self._url = None
+        self._enhance_from = None
+        self._plain = None
         self._state = PENDING
         if task is not None:
             with suppress(asyncio.CancelledError):
@@ -201,39 +288,89 @@ class CoverLoader:
             self._task.cancel()
             self._task = None
 
-    async def _load(self, url: str) -> None:
-        """Fetch `url` until it succeeds; only cancellation ends it early."""
-        delay = COVER_RETRY_INITIAL_SECONDS
-        first_failure = True
-        while True:
-            try:
-                frame = await fetch_cover(self._client, url, self._size)
-            except Exception as error:
-                if self._url != url:
-                    # Cancellation should have stopped this task already; a
-                    # library that swallowed it must not leave a stale answer.
-                    return
-                # The traceback once, for diagnosis; after that one line per
-                # attempt, as for the board connect.
-                logger.warning(
-                    "cover download failed for %s (%s: %s); retrying in %s s",
-                    url,
-                    type(error).__name__,
-                    error,
-                    delay,
-                    exc_info=first_failure,
-                )
-                first_failure = False
-                self._state = FAILED
-                await self._sleep(delay)
-                delay = min(delay * 2, COVER_RETRY_MAX_SECONDS)
-            else:
-                if self._url != url:
-                    return
-                self._state = CoverState(CoverStatus.READY, frame)
-                logger.info("cover ready: %s", url)
-                if self._cache is not None:
-                    # The unmarked render: the staleness marker is drawn on a
-                    # copy at display time, never into the stored frame.
-                    self._cache.store(url, frame)
+    def _will_enhance(self, enhance_from: str | None) -> bool:
+        """Whether enhancing from `enhance_from` would be attempted now."""
+        return (
+            enhance_from is not None
+            and self._enhancer is not None
+            and self._enhancer.paused_until is None
+            and not self._enhancer.gave_up(enhance_from)
+        )
+
+    def _wanted(self, url: str, enhance_from: str | None) -> bool:
+        return self._url == url and self._enhance_from == enhance_from
+
+    async def _load(
+        self, url: str, enhance_from: str | None = None, plain: Image.Image | None = None
+    ) -> None:
+        """Fetch `url` until it succeeds, unless its frame is given, then enhance if asked.
+
+        Only cancellation ends it early.
+        """
+        if plain is None:
+            delay = COVER_RETRY_INITIAL_SECONDS
+            first_failure = True
+            while True:
+                try:
+                    plain = await fetch_cover(self._client, url, self._size)
+                except Exception as error:
+                    if not self._wanted(url, enhance_from):
+                        # Cancellation should have stopped this task already; a
+                        # library that swallowed it must not leave a stale answer.
+                        return
+                    # The traceback once, for diagnosis; after that one line per
+                    # attempt, as for the board connect.
+                    logger.warning(
+                        "cover download failed for %s (%s: %s); retrying in %s s",
+                        url,
+                        type(error).__name__,
+                        error,
+                        delay,
+                        exc_info=first_failure,
+                    )
+                    first_failure = False
+                    self._state = FAILED
+                    await self._sleep(delay)
+                    delay = min(delay * 2, COVER_RETRY_MAX_SECONDS)
+                else:
+                    break
+            if not self._wanted(url, enhance_from):
                 return
+            self._plain = plain
+            if self._cache is not None:
+                # The unmarked render: the staleness marker is drawn on a
+                # copy at display time, never into the stored frame.
+                self._cache.store(url, plain)
+            if not self._will_enhance(enhance_from):
+                self._state = CoverState(CoverStatus.READY, plain)
+                logger.info("cover ready: %s", url)
+                return
+            logger.info("cover ready: %s; enhancing it", url)
+            self._state = GENERATING
+        assert enhance_from is not None
+        enhanced = await self._enhance(enhance_from)
+        if not self._wanted(url, enhance_from):
+            return
+        if enhanced is None:
+            self._state = CoverState(CoverStatus.READY, plain)
+            return
+        self._state = CoverState(CoverStatus.READY, enhanced, enhanced=True)
+        if self._cache is not None:
+            self._cache.store(url, enhanced, enhanced=True)
+
+    async def _enhance(self, source_url: str) -> Image.Image | None:
+        """The enhanced frame made from the image at `source_url`, or `None` for plain."""
+        assert self._enhancer is not None
+        try:
+            source = await download_image(self._client, source_url)
+        except Exception as error:
+            # Not retried: the plain cover stands in, and the source is asked
+            # for again the next time this cover is wanted enhanced.
+            logger.warning(
+                "could not download %s to enhance it (%s: %s); showing the plain cover",
+                source_url,
+                type(error).__name__,
+                error,
+            )
+            return None
+        return await self._enhancer.enhance(source_url, source.data, source.mime)

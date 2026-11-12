@@ -26,12 +26,16 @@ SETTING_KEYS = (
     "SPOTIFY_REDIRECT_URI",
     "SPOTIFY_TOKEN_FILE",
     "COVER_CACHE_DIR",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
+    "OWNER_SETTINGS_FILE",
     ENV_FILE_VARIABLE,
 )
 
 A_MAC = "11:22:33:44:55:66"
 A_CLIENT_ID = "0123456789abcdef0123456789abcdef"
 A_REDIRECT_URI = "https://led.example.com/callback"
+AN_OPENROUTER_KEY = "sk-or-v1-0123456789abcdef"
 
 
 @pytest.fixture
@@ -231,3 +235,61 @@ def test_a_client_id_without_a_redirect_uri_is_rejected_at_construction(
         Settings(
             _env_file=None, spotify_client_id=A_CLIENT_ID, spotify_redirect_uri=redirect_uri
         )
+
+
+def test_without_an_openrouter_key_enhancement_has_no_key(clean_env: None) -> None:
+    assert Settings(_env_file=None).openrouter_api_key is None
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_openrouter_key_means_no_key(
+    clean_env: None, tmp_path: Path, blank: str
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"OPENROUTER_API_KEY={blank}\n", encoding="utf-8")
+
+    assert Settings(_env_file=env_file).openrouter_api_key is None
+
+
+def test_an_openrouter_key_is_read_and_kept_secret(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", AN_OPENROUTER_KEY)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.openrouter_api_key is not None
+    assert settings.openrouter_api_key.get_secret_value() == AN_OPENROUTER_KEY
+    # The settings object is the kind of thing that ends up in a log line.
+    assert AN_OPENROUTER_KEY not in repr(settings)
+    assert AN_OPENROUTER_KEY not in str(settings)
+
+
+def test_the_openrouter_model_defaults_to_the_proof_of_concepts(clean_env: None) -> None:
+    assert Settings(_env_file=None).openrouter_model == "black-forest-labs/flux-3-image-klein"
+
+
+def test_the_openrouter_model_is_read_from_the_environment(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_MODEL", "qwen/qwen-image-2.1-pro")
+
+    assert Settings(_env_file=None).openrouter_model == "qwen/qwen-image-2.1-pro"
+
+
+def test_without_an_openrouter_key_enhancement_is_unavailable(clean_env: None) -> None:
+    assert not Settings(_env_file=None).enhance_available
+
+
+def test_an_openrouter_key_makes_enhancement_available(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", AN_OPENROUTER_KEY)
+
+    assert Settings(_env_file=None).enhance_available
+
+
+def test_the_owner_settings_file_defaults_to_the_checkout_var_directory(
+    clean_env: None,
+) -> None:
+    assert Settings(_env_file=None).owner_settings_file == Path("var/settings.json")
