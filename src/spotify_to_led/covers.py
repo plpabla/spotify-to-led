@@ -41,7 +41,8 @@ enhanced cover goes:
   first so that there is always one to fall back on, and so that switching
   enhancement off is answered at once, from memory or the cache.
 - Then `GENERATING`, while the source is downloaded and the enhancer runs,
-  which takes seconds, or a minute or more through its retries.
+  which takes seconds, or a minute or more through its retries. The state
+  carries the plain frame, so the display can show it meanwhile.
 - Then `READY`: enhanced on success, when the frame is also stored as the
   image's enhanced entry, or plain when the enhancer answers `None` or the
   source cannot be downloaded. An image the enhancer has given up on, or any
@@ -109,10 +110,11 @@ class CoverStatus(StrEnum):
 
 @dataclass(frozen=True)
 class CoverState:
-    """The state of one cover; `frame` is the rendered cover, set only when `READY`.
+    """The state of one cover; `frame` is the rendered cover, set when `READY` or `GENERATING`.
 
-    `enhanced` says whether that frame is the AI-enhanced one, so it is only
-    ever true when `READY`.
+    While `GENERATING`, `frame` is the plain cover the enhanced one is being
+    made for. `enhanced` says whether the frame is the AI-enhanced one, so it
+    is only ever true when `READY`.
     """
 
     status: CoverStatus
@@ -121,7 +123,6 @@ class CoverState:
 
 
 PENDING = CoverState(CoverStatus.PENDING)
-GENERATING = CoverState(CoverStatus.GENERATING)
 FAILED = CoverState(CoverStatus.FAILED)
 
 
@@ -261,8 +262,8 @@ class CoverLoader:
                 self._state = CoverState(CoverStatus.READY, plain)
                 return
             # The plain frame is in hand, so generation is all that is left,
-            # and the display shows the placeholder from this very sample.
-            self._state = GENERATING
+            # and the display shows that frame from this very sample.
+            self._state = CoverState(CoverStatus.GENERATING, plain)
         self._task = asyncio.create_task(self._load(url, enhance_from, plain))
 
     def state(self, url: str) -> CoverState:
@@ -346,7 +347,7 @@ class CoverLoader:
                 logger.info("cover ready: %s", url)
                 return
             logger.info("cover ready: %s; enhancing it", url)
-            self._state = GENERATING
+            self._state = CoverState(CoverStatus.GENERATING, plain)
         assert enhance_from is not None
         enhanced = await self._enhance(enhance_from)
         if not self._wanted(url, enhance_from):

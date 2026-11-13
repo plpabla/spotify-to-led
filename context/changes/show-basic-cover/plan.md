@@ -332,16 +332,16 @@ None. No stored data changes; `/status` gains a field.
 
 #### Automated
 
-- [x] 1.1 Frame tests pass: `uv run pytest tests/test_frames.py`
-- [x] 1.2 Full suite passes: `uv run pytest`
+- [x] 1.1 Frame tests pass: `uv run pytest tests/test_frames.py` — a18d1d2
+- [x] 1.2 Full suite passes: `uv run pytest` — a18d1d2
 
 ### Phase 2: Plain cover while generating
 
 #### Automated
 
-- [ ] 2.1 Display, loader and app tests pass
-- [ ] 2.2 Full suite passes: `uv run pytest`
-- [ ] 2.3 No placeholder expectation remains for a generating cover
+- [x] 2.1 Display, loader and app tests pass
+- [x] 2.2 Full suite passes: `uv run pytest`
+- [x] 2.3 No placeholder expectation remains for a generating cover
 
 #### Manual
 
