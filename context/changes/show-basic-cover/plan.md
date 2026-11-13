@@ -339,9 +339,9 @@ None. No stored data changes; `/status` gains a field.
 
 #### Automated
 
-- [x] 2.1 Display, loader and app tests pass
-- [x] 2.2 Full suite passes: `uv run pytest`
-- [x] 2.3 No placeholder expectation remains for a generating cover
+- [x] 2.1 Display, loader and app tests pass — e483147
+- [x] 2.2 Full suite passes: `uv run pytest` — e483147
+- [x] 2.3 No placeholder expectation remains for a generating cover — e483147
 
 #### Manual
 
