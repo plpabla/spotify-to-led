@@ -67,6 +67,10 @@ READY_A = CoverState(CoverStatus.READY, COVER_A)
 READY_B = CoverState(CoverStatus.READY, COVER_B)
 FAILED = CoverState(CoverStatus.FAILED)
 
+# What the loop is told today's spend is, unless a test says otherwise: with an
+# enhancer the service always passes one, so a generating cover always has a bar.
+NO_SPEND = 0.0
+
 # Every image the service may push in these tests, by the name assertions use.
 DRAWN: dict[str, Image.Image] = {
     "idle": frames.idle(SIZE),
@@ -75,8 +79,10 @@ DRAWN: dict[str, Image.Image] = {
     "cover a": COVER_A,
     "cover b": COVER_B,
     "stale cover a": frames.with_stale_marker(COVER_A),
-    "generating cover a": frames.with_generating_marker(COVER_A),
-    "stale generating cover a": frames.with_stale_marker(frames.with_generating_marker(COVER_A)),
+    # The generating cover is told from the plain one by its spend bar, drawn
+    # here at nothing spent: a black bottom row.
+    "generating cover a": frames.with_spend_bar(COVER_A, NO_SPEND),
+    "stale generating cover a": frames.with_stale_marker(frames.with_spend_bar(COVER_A, NO_SPEND)),
     "enhanced cover a": ENHANCED_A,
     "stale idle": frames.with_stale_marker(frames.idle(SIZE)),
 }
@@ -237,7 +243,15 @@ async def run_until_out_of_sleeps(
     covers: FakeCovers | None = None,
 ) -> None:
     with pytest.raises(asyncio.CancelledError):
-        await run_display(board, SIZE, current, covers=covers, clock=lambda: NOW, sleep=sleep)
+        await run_display(
+            board,
+            SIZE,
+            current,
+            covers=covers,
+            spend_fraction=lambda: NO_SPEND,
+            clock=lambda: NOW,
+            sleep=sleep,
+        )
 
 
 # --- the rule -------------------------------------------------------------
@@ -886,7 +900,7 @@ def test_a_cover_being_generated_selects_its_plain_cover_flagged_generating(
 
     assert chosen == generating(A_URL, stale)
     assert chosen.enhanced is False
-    # The plain cover with and without the dot are different presentations.
+    # The plain cover and the one being enhanced are different presentations.
     assert chosen != cover(A_URL, stale)
 
 
@@ -958,6 +972,7 @@ async def test_with_the_switch_on_the_widest_image_is_the_source_and_off_there_i
             scripted(album, album, NOTHING),
             covers=covers,
             owner_settings=switch,
+            spend_fraction=lambda: NO_SPEND,
             clock=lambda: NOW,
             sleep=sleep,
         )
@@ -999,7 +1014,7 @@ async def test_a_downloaded_cover_shows_with_the_dot_then_as_the_enhanced_frame(
     assert board.drawn == ["cover b", "generating cover a", "enhanced cover a"]
 
 
-async def test_a_generation_that_fails_or_is_paused_redraws_the_plain_cover_without_the_dot(
+async def test_a_generation_that_fails_or_is_paused_redraws_the_plain_cover_without_the_bar(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Either way the loader turns `READY` with the plain frame.
@@ -1111,8 +1126,8 @@ async def run_with_spend(
 
 
 def barred(frame: Image.Image, fraction: float) -> bytes:
-    """The bytes of `frame` with the bar and the generating dot, as the loop draws it."""
-    return frames.with_generating_marker(frames.with_spend_bar(frame, fraction)).tobytes()
+    """The bytes of `frame` with the spend bar, as the loop draws it."""
+    return frames.with_spend_bar(frame, fraction).tobytes()
 
 
 async def test_a_generating_cover_is_drawn_with_the_bar_and_a_change_of_spend_redraws() -> None:
@@ -1147,9 +1162,7 @@ async def test_the_stale_marker_is_drawn_over_a_barred_generating_cover() -> Non
 
     assert [frame.tobytes() for frame in board.pushed] == [
         barred(COVER_A, 0.95),
-        frames.with_stale_marker(
-            frames.with_generating_marker(frames.with_spend_bar(COVER_A, 0.95))
-        ).tobytes(),
+        frames.with_stale_marker(frames.with_spend_bar(COVER_A, 0.95)).tobytes(),
     ]
 
 
@@ -1261,7 +1274,7 @@ async def until(condition: Callable[[], bool]) -> None:
 def frames_named(board: FakeBoard) -> list[str]:
     names = {
         PLAIN_FRAME.tobytes(): "plain",
-        frames.with_generating_marker(PLAIN_FRAME).tobytes(): "plain+dot",
+        frames.with_spend_bar(PLAIN_FRAME, NO_SPEND).tobytes(): "plain+bar",
         ENHANCED_FRAME.tobytes(): "enhanced",
         frames.playing_placeholder(SIZE).tobytes(): "placeholder",
     }
@@ -1270,7 +1283,7 @@ def frames_named(board: FakeBoard) -> list[str]:
 
 async def test_flipping_the_switch_redraws_the_current_item_both_ways(tmp_path: Path) -> None:
     # The plain cover is up, from the cache; on generates (the plain cover
-    # with the dot, never the placeholder, then enhanced), off goes back to
+    # with the bar, never the placeholder, then enhanced), off goes back to
     # plain with no download, and on again is the enhanced frame from the cache.
     FrameCache(tmp_path, SIZE).store(A_SMALL, PLAIN_FRAME)
     network = ScriptedNetwork([a_generation()])
@@ -1299,19 +1312,20 @@ async def test_flipping_the_switch_redraws_the_current_item_both_ways(tmp_path: 
             lambda: an_album(A_SMALL, A_WIDE),
             covers=loader,
             owner_settings=switch,
+            spend_fraction=lambda: NO_SPEND,
             clock=lambda: NOW,
             sleep=sleep,
         )
     await loader.aclose()
 
-    assert frames_named(board) == ["plain", "plain+dot", "enhanced", "plain", "enhanced"]
+    assert frames_named(board) == ["plain", "plain+bar", "enhanced", "plain", "enhanced"]
     # The source download and one generation: the plain frame was never
     # downloaded, and nothing was generated twice.
     assert network.image_urls == [A_WIDE]
     assert network.openrouter_requests == 1
 
 
-async def test_a_never_seen_cover_with_its_plain_cached_shows_the_dot_then_enhanced(
+async def test_a_never_seen_cover_with_its_plain_cached_shows_the_bar_then_enhanced(
     tmp_path: Path,
 ) -> None:
     FrameCache(tmp_path, SIZE).store(A_SMALL, PLAIN_FRAME)
@@ -1329,13 +1343,14 @@ async def test_a_never_seen_cover_with_its_plain_cached_shows_the_dot_then_enhan
             lambda: an_album(A_SMALL, A_WIDE),
             covers=loader,
             owner_settings=Switch(on=True),
+            spend_fraction=lambda: NO_SPEND,
             clock=lambda: NOW,
             sleep=sleep,
         )
     await loader.aclose()
 
-    # The dot from the very first sample: no placeholder, no previous item.
-    assert frames_named(board) == ["plain+dot", "enhanced"]
+    # The bar from the very first sample: no placeholder, no previous item.
+    assert frames_named(board) == ["plain+bar", "enhanced"]
 
 
 async def test_with_the_switch_off_no_request_reaches_openrouter(tmp_path: Path) -> None:

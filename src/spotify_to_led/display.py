@@ -25,17 +25,16 @@ a reader or a download. The rule:
   placeholder. Only before anything was chosen at all does a pending cover
   show the placeholder.
 - With AI enhancement switched on (FR-019), a cover whose enhanced frame is
-  being generated shows its plain frame with the generating marker, a small
-  dot in the top-left corner: generation takes seconds, far longer than a
+  being generated shows its plain frame with the spend bar along its bottom
+  row: today's AI spend as a fraction of the owner's daily limit, as it stood
+  before this generation. Generation takes seconds, far longer than a
   changeover should keep the previous item's cover up. It then redraws as
-  the enhanced frame, or as the plain one without the dot when the
+  the enhanced frame, or as the plain one without the bar when the
   generation fails or is paused. A cover's presentation says whether it is
   the enhanced frame and whether it is generating, so switching enhancement
-  either way redraws the current item. While generating, the plain frame also
-  carries the spend bar along its bottom row: today's AI spend as a fraction
-  of the owner's daily limit, as it stood before this generation. The
-  fraction is part of the presentation, so a change of it while generating
-  redraws; no other presentation, the enhanced frame included, has the bar.
+  either way redraws the current item. The fraction is part of the
+  presentation too, so a change of it while generating redraws; no other
+  presentation, the enhanced frame included, has the bar.
 - Whatever a reader's snapshot chose, cover, idle, placeholder or symbol,
   newly chosen or kept through a changeover, is stale once reads have been
   failing, or no read has succeeded, for more than `STALE_AFTER_SECONDS`,
@@ -232,8 +231,8 @@ def select_presentation(
         # the new cover is ready, rather than flashing the placeholder.
         chosen = previous if previous is not None else PLACEHOLDER
     elif cover[1].status is CoverStatus.GENERATING:
-        # The plain frame is in hand: shown, with the dot, while the enhanced
-        # one is made.
+        # The plain frame is in hand: shown, with the spend bar, while the
+        # enhanced one is made.
         chosen = Presentation(
             PresentationKind.COVER, cover[0], generating=True, spend_fraction=spend_fraction
         )
@@ -371,9 +370,9 @@ def _frame_for(
 ) -> Image.Image:
     """Return the RGB `(size, size)` frame that draws `presentation`, with its markers.
 
-    The spend bar goes on first, the generating dot second and the staleness
-    marker last, each on a copy, so the retained frame is never drawn into and
-    FR-018's marker is never covered.
+    The spend bar goes on first and the staleness marker last, each on a
+    copy, so the retained frame is never drawn into and FR-018's marker is
+    never covered.
     """
     if presentation.kind is PresentationKind.IDLE:
         frame = frames.idle(size)
@@ -389,7 +388,6 @@ def _frame_for(
         frame = retained[2]
         if presentation.spend_fraction is not None:
             frame = frames.with_spend_bar(frame, presentation.spend_fraction)
-        frame = frames.with_generating_marker(frame)
     else:
         frame = retained[2]
     return frames.with_stale_marker(frame) if presentation.stale else frame
