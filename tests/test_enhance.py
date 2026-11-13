@@ -631,9 +631,11 @@ async def test_a_success_records_its_reported_cost() -> None:
 @pytest.mark.parametrize(
     "cost", [None, float("nan"), float("inf"), -0.009], ids=["none", "NaN", "infinite", "negative"]
 )
-async def test_a_success_without_a_usable_cost_records_nothing_and_warns(
+async def test_a_success_without_a_usable_cost_records_the_estimate_and_warns(
     cost: float | None, caplog: pytest.LogCaptureFixture
 ) -> None:
+    # Counted all the same, or regenerating with a model that never reports
+    # its cost would never reach the daily limit.
     ledger = MemoryLedger()
     server = ScriptedOpenRouter([a_generated_image(cost=cost)])
     enhancer = an_enhancer(server, RecordingSleep(), ledger=ledger)
@@ -641,8 +643,8 @@ async def test_a_success_without_a_usable_cost_records_nothing_and_warns(
     with caplog.at_level(logging.INFO, logger="spotify_to_led.enhance"):
         assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
 
-    assert ledger.recorded == []
-    assert enhancer.spent_today == 0.0
+    assert ledger.recorded == [enhance.UNREPORTED_COST_ESTIMATE_USD]
+    assert enhancer.spent_today == enhance.UNREPORTED_COST_ESTIMATE_USD
     [record] = caplog.records
     assert record.levelno == logging.WARNING
     assert "cost not reported" in record.getMessage()

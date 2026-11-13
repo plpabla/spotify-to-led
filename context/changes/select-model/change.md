@@ -1,7 +1,7 @@
 ---
 change_id: select-model
 title: Select the AI enhancement model from a predefined list on the status page
-status: implemented
+status: impl_reviewed
 created: 2026-11-13
 updated: 2026-11-13
 archived_at: null

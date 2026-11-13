@@ -63,6 +63,8 @@ NOTHING = replace(INITIAL_SNAPSHOT, status=PlaybackStatus.NOTHING_PLAYING)
 COVER_A = Image.new("RGB", (SIZE, SIZE), (200, 40, 90))
 COVER_B = Image.new("RGB", (SIZE, SIZE), (30, 90, 200))
 ENHANCED_A = Image.new("RGB", (SIZE, SIZE), (250, 250, 0))
+# What a regeneration of cover a made: another enhanced frame of the same cover.
+REGENERATED_A = Image.new("RGB", (SIZE, SIZE), (0, 250, 250))
 READY_A = CoverState(CoverStatus.READY, COVER_A)
 READY_B = CoverState(CoverStatus.READY, COVER_B)
 FAILED = CoverState(CoverStatus.FAILED)
@@ -84,6 +86,7 @@ DRAWN: dict[str, Image.Image] = {
     "generating cover a": frames.with_spend_bar(COVER_A, NO_SPEND),
     "stale generating cover a": frames.with_stale_marker(frames.with_spend_bar(COVER_A, NO_SPEND)),
     "enhanced cover a": ENHANCED_A,
+    "regenerated cover a": REGENERATED_A,
     "stale idle": frames.with_stale_marker(frames.idle(SIZE)),
 }
 
@@ -1012,6 +1015,23 @@ async def test_a_downloaded_cover_shows_with_the_dot_then_as_the_enhanced_frame(
 
     # The previous cover through the download, then never the placeholder.
     assert board.drawn == ["cover b", "generating cover a", "enhanced cover a"]
+
+
+async def test_a_regeneration_finished_between_two_samples_draws_the_new_frame(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The loader went GENERATING and back to READY enhanced within one sample,
+    # so the presentation is the same before and after; only the frame differs.
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A_ENHANCED})
+    regenerated = CoverState(CoverStatus.READY, REGENERATED_A, enhanced=True)
+    sleep = ActingSleep(sleeps=3, actions={1: lambda: covers.states.update({A_URL: regenerated})})
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
+        await run_until_out_of_sleeps(board, lambda: playing(A_URL), sleep, covers)
+
+    assert board.drawn == ["enhanced cover a", "regenerated cover a"]
+    assert "with a new frame" in caplog.text
 
 
 async def test_a_generation_that_fails_or_is_paused_redraws_the_plain_cover_without_the_bar(

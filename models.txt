@@ -8,3 +8,5 @@ bytedance-seed/seedream-5-0-flash
 qwen/qwen-image-2.1-pro
 x-ai/grok-imagine-image-2.0
 openai/gpt-image-1-mini
+openai/gpt-image-5-mini
+google/gemini-nano-banana-2.1

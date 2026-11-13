@@ -57,7 +57,8 @@ loader calls. It hands back a finished board frame, shrunk with
 
 Each image's outcome is logged once, naming the image's URL and the model: INFO with the
 cost on success, a WARNING when the enhancer gives up or pauses, or when a
-success reports no cost, which the daily limit then cannot count. A retry is an
+success reports no cost, which is then counted toward the daily limit at
+`UNREPORTED_COST_ESTIMATE_USD`. A retry is an
 INFO line of its own, and so is an image not started because the limit is
 reached. The key is in none of them.
 """
@@ -120,6 +121,9 @@ ENHANCE_ATTEMPTS = 3
 # The wait after each failed attempt but the last: the start of the cover
 # retry's doubling, cut short, since every attempt here is paid for.
 ENHANCE_RETRY_DELAYS: tuple[float, ...] = (5.0, 10.0)
+# What a success counts toward today's spend when OpenRouter reports no cost
+# for it: the default model's price per image, so the daily limit still moves.
+UNREPORTED_COST_ESTIMATE_USD = 0.009
 
 Clock = Callable[[], datetime]
 Sleep = Callable[[float], Awaitable[None]]
@@ -445,15 +449,18 @@ class Enhancer:
                     )
                     self._ledger.record(generated.cost)
                 else:
-                    # Nothing to add to today's spend, so the daily limit
-                    # cannot see this call; loud enough to be noticed if it
-                    # starts happening for every cover.
+                    # Counted at an estimate, or a model that never reports
+                    # its cost could be regenerated without the daily limit
+                    # ever seeing it; loud enough to be noticed if it starts
+                    # happening for every cover.
                     logger.warning(
                         "cover enhanced: %s with %s"
-                        " (cost not reported; not counted toward today's limit)",
+                        " (cost not reported; counted as an estimated $%.4f)",
                         url,
                         model,
+                        UNREPORTED_COST_ESTIMATE_USD,
                     )
+                    self._ledger.record(UNREPORTED_COST_ESTIMATE_USD)
                 # Off the event loop for the same reason as the decode.
                 return await asyncio.to_thread(render_enhanced, generated.image, self._size)
         # The loop returns on its last attempt whatever the outcome.

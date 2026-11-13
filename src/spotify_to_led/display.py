@@ -295,6 +295,10 @@ async def run_display(
     # The URL, enhancement and frame of the cover last chosen, kept here
     # because the loader forgets it as soon as the next cover is wanted.
     retained: tuple[str, bool, Image.Image] | None = None
+    # The cover frame `attempted` was drawn from. A regenerated cover keeps its
+    # presentation (same URL, enhanced both before and after), so when its
+    # generation ends between two samples only the frame tells it apart.
+    drawn: Image.Image | None = None
     # Whether the last push failed, and when and how soon to try it again.
     push_failed = False
     retry_in = 0.0
@@ -329,15 +333,24 @@ async def run_display(
                 # a cover is always the one chosen.
                 retained = (cover[0], cover[1].enhanced, cover[1].frame)
             wanted = (previous, transport.connections)
-            if wanted != attempted:
+            frame = (
+                retained[2]
+                if previous.kind is PresentationKind.COVER and retained is not None
+                else None
+            )
+            if wanted != attempted or frame is not drawn:
                 presentation = wanted[0]
                 if attempted is not None and presentation == attempted[0]:
-                    logger.info("board link came up again; redrawing %s", presentation)
+                    if wanted[1] != attempted[1]:
+                        logger.info("board link came up again; redrawing %s", presentation)
+                    else:
+                        logger.info("board presentation: %s, with a new frame", presentation)
                 else:
                     logger.info("board presentation: %s", presentation)
                 # Recorded before the push, so a failed push is retried on its
                 # own backoff below rather than on every sample.
                 attempted = wanted
+                drawn = frame
                 status.presentation = presentation
                 # The last failure belongs to the presentation before this one.
                 status.push_failed = False
