@@ -52,7 +52,7 @@ the same way over any frame, and this run is about the cover.
 
 Every generation is a paid OpenRouter call, about $0.009 with the default
 model, so `--enhance` needs `OPENROUTER_API_KEY` in the settings
-(`OPENROUTER_MODEL` picks another model), and without it the script stops
+(it uses the first model in `models.txt`), and without it the script stops
 before anything is downloaded. Each call's wall time and reported cost are
 printed as it returns, and a summary after the last one. A cover whose
 generation fails is reported and the run goes on: its enhanced cells stay
@@ -75,6 +75,7 @@ from spotify_to_led.board.transport import BoardTransport
 from spotify_to_led.config import Settings, load_settings
 from spotify_to_led.enhance import EnhanceError, generate
 from spotify_to_led.frames import with_stale_marker
+from spotify_to_led.models import load_models
 from spotify_to_led.rendering import render_cover, render_enhanced
 
 DEFAULT_HOLD_SECONDS = 4.0
@@ -174,7 +175,8 @@ async def enhance_shots(
     total_cost = 0.0
     unreported_costs = 0
     failures = 0
-    print(f"generating {len(covers)} covers with {settings.openrouter_model}")
+    model = load_models(settings.model_list_file)[0]
+    print(f"generating {len(covers)} covers with {model}")
     for index, cover in enumerate(covers, start=1):
         label = f"cover {index}/{len(covers)} {cover.name}"
         shots.append(Shot(index, cover.name, PLAIN, render_cover(cover.image, size)))
@@ -183,7 +185,7 @@ async def enhance_shots(
             generated = await generate(
                 client,
                 api_key,
-                settings.openrouter_model,
+                model,
                 cover.data,
                 cover.mime,
                 timeout=ENHANCE_TIMEOUT_SECONDS,

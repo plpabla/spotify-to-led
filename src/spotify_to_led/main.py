@@ -21,7 +21,9 @@ whenever that choice changes or the link comes back.
 With an OpenRouter key and Spotify both configured, the loader also gets an
 `Enhancer` on the same client, and the display reads the owner's switch on
 every sample: switched on, covers are redrawn by an image model (FR-019),
-each image once, kept beside its plain frame in the cache. Switched off, or
+each image once, kept beside its plain frame in the cache. The model is the
+owner's pick from the ids in `MODEL_LIST_FILE`, or the list's first id
+without one, read as each generation starts. Switched off, or
 without a key, no OpenRouter request is made. What each generation cost is
 added up per UTC day in `AI_SPEND_FILE`, and once today's total reaches the
 owner's daily limit no generation starts until 00:00 UTC.
@@ -82,6 +84,7 @@ from spotify_to_led.display import (
 )
 from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
+from spotify_to_led.models import load_models, model_in_use
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spend import SpendLedger
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
@@ -156,6 +159,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.owner_settings_store = owner_settings_store
     app.state.owner_settings = owner_settings_store.load()
     app.state.enhance_available = settings.enhance_available
+    app.state.model_list_file = settings.model_list_file
 
     spotify_client: httpx2.AsyncClient | None = None
     reader: SpotifyReader | None = None
@@ -173,7 +177,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             enhancer = Enhancer(
                 spotify_client,
                 settings.openrouter_api_key.get_secret_value(),
-                settings.openrouter_model,
+                # The list and the owner's pick are both read as each cover
+                # starts, so an edit to either applies without a restart.
+                lambda: model_in_use(
+                    load_models(app.state.model_list_file), app.state.owner_settings.model
+                ),
                 settings.board_size,
                 ledger=SpendLedger(settings.ai_spend_file),
                 # Read at every check, so a limit saved from the page applies
@@ -428,6 +436,7 @@ async def put_settings(
             if change.daily_limit_usd is not None
             else previous.daily_limit_usd
         ),
+        model=previous.model,
     )
     try:
         request.app.state.owner_settings_store.save(updated)

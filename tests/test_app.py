@@ -691,7 +691,7 @@ def test_put_settings_saves_and_status_reports_it(
     )
     assert disabled == idle_enhancement(True, False)
     saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
-    assert saved == {"ai_enhanced": False, "daily_limit_usd": 1.0}
+    assert saved == {"ai_enhanced": False, "daily_limit_usd": 1.0, "model": None}
 
 
 def test_the_saved_choice_survives_a_restart(
@@ -786,7 +786,7 @@ def test_without_a_key_turning_enhancement_on_is_a_409_and_changes_nothing(
     assert enhancement == idle_enhancement(False, False)
     assert off.status_code == 200
     saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
-    assert saved == {"ai_enhanced": False, "daily_limit_usd": 1.0}
+    assert saved == {"ai_enhanced": False, "daily_limit_usd": 1.0, "model": None}
 
 
 def test_put_settings_takes_a_limit_alone_and_keeps_the_switch(
@@ -808,7 +808,7 @@ def test_put_settings_takes_a_limit_alone_and_keeps_the_switch(
     assert enhancement["enabled"] is True
     assert in_memory == OwnerSettings(ai_enhanced=True, daily_limit_usd=0.5)
     saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
-    assert saved == {"ai_enhanced": True, "daily_limit_usd": 0.5}
+    assert saved == {"ai_enhanced": True, "daily_limit_usd": 0.5, "model": None}
 
 
 def test_put_settings_keeps_the_limit_when_only_the_switch_is_sent(
@@ -1176,7 +1176,7 @@ def enhancer_after(answer: int | None, tmp_path: Path) -> Enhancer:
             enhancer = Enhancer(
                 client,
                 AN_OPENROUTER_KEY,
-                "a-model",
+                lambda: "a-model",
                 32,
                 ledger=SpendLedger(tmp_path / "ai-spend.json", clock=lambda: AN_INSTANT),
                 daily_limit=lambda: 1.0,

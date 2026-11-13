@@ -1227,7 +1227,7 @@ def a_real_loader(network: ScriptedNetwork, root: Path) -> CoverLoader:
     enhancer = Enhancer(
         client,
         "sk-or-v1-test-key",
-        "a/model",
+        lambda: "a/model",
         SIZE,
         ledger=SpendLedger(root / "ai-spend.json"),
         daily_limit=lambda: 1.0,

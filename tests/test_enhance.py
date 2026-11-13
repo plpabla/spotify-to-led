@@ -401,6 +401,16 @@ class Limit:
         return self.usd
 
 
+class Model:
+    """The model in use, which a test may change between calls."""
+
+    def __init__(self, model_id: str = A_MODEL) -> None:
+        self.model_id = model_id
+
+    def __call__(self) -> str:
+        return self.model_id
+
+
 def an_enhancer(
     server: ScriptedOpenRouter,
     sleep: RecordingSleep,
@@ -408,12 +418,13 @@ def an_enhancer(
     *,
     ledger: MemoryLedger | None = None,
     limit: Limit | None = None,
+    model: Model | None = None,
 ) -> Enhancer:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(server))
     return Enhancer(
         client,
         AN_API_KEY,
-        A_MODEL,
+        model or Model(),
         BOARD_SIZE,
         ledger=ledger or MemoryLedger(),
         daily_limit=limit or Limit(),
@@ -443,7 +454,7 @@ async def test_an_enhanced_cover_is_the_answer_shrunk_with_lanczos_and_its_cost_
     assert request.extensions["timeout"]["read"] == 90.0
     assert sleep.durations == []
     assert [r.getMessage() for r in caplog.records] == [
-        f"cover enhanced: {A_COVER_URL} (cost $0.0090)"
+        f"cover enhanced: {A_COVER_URL} with {A_MODEL} (cost $0.0090)"
     ]
 
 
@@ -476,6 +487,7 @@ async def test_three_retryable_failures_give_up_until_forget(
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1, "the outcome is logged once"
     assert A_COVER_URL in warnings[0].getMessage()
+    assert A_MODEL in warnings[0].getMessage()
 
     # Wanted again: no request, until the switch is flipped.
     assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
@@ -505,6 +517,7 @@ async def test_a_rejected_request_is_given_up_on_without_a_retry(
     assert sleep.durations == []
     assert enhancer.gave_up(A_COVER_URL)
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
+    assert A_MODEL in caplog.records[0].getMessage()
 
 
 async def test_an_unexpected_error_gives_up_on_the_image_instead_of_escaping(
@@ -544,6 +557,7 @@ async def test_a_credit_refusal_pauses_every_image_until_the_next_utc_midnight(
     assert sleep.durations == [], "a refusal is not retried"
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
     assert NEXT_MIDNIGHT.isoformat() in caplog.records[0].getMessage()
+    assert A_MODEL in caplog.records[0].getMessage()
     # Not a give-up: the image is fine, the key is not.
     assert not enhancer.gave_up(A_COVER_URL)
 
@@ -707,3 +721,55 @@ async def test_the_limit_is_read_live_so_raising_it_lets_the_next_cover_generate
     assert not enhancer.limit_reached
     assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
     assert len(server.requests) == 1
+
+
+# --- the model in use -----------------------------------------------------
+
+ANOTHER_MODEL = "sourceful/riverflow-v2-fast"
+
+
+async def test_the_request_asks_for_the_model_in_use_and_follows_a_change() -> None:
+    model = Model()
+    server = ScriptedOpenRouter([a_generated_image(), a_generated_image()])
+    enhancer = an_enhancer(server, RecordingSleep(), model=model)
+
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+    model.model_id = ANOTHER_MODEL
+    assert await enhancer.enhance(ANOTHER_COVER_URL, SOURCE, SOURCE_MIME) is not None
+
+    assert [json.loads(r.content)["model"] for r in server.requests] == [A_MODEL, ANOTHER_MODEL]
+
+
+async def test_every_attempt_for_an_image_asks_the_model_read_as_it_started() -> None:
+    model = Model()
+    server = ScriptedOpenRouter([retryable(), a_generated_image()])
+
+    class SwitchTheModel(RecordingSleep):
+        async def __call__(self, seconds: float) -> None:
+            # The owner picks another model between attempts.
+            model.model_id = ANOTHER_MODEL
+
+    enhancer = an_enhancer(server, SwitchTheModel(), model=model)
+
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+
+    assert [json.loads(r.content)["model"] for r in server.requests] == [A_MODEL, A_MODEL]
+
+
+async def test_forget_image_tries_only_that_image_again() -> None:
+    rejected = an_answer({"error": {"message": "bad input image"}}, 400)
+    server = ScriptedOpenRouter([rejected, rejected])
+    enhancer = an_enhancer(server, RecordingSleep())
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert await enhancer.enhance(ANOTHER_COVER_URL, SOURCE, SOURCE_MIME) is None
+
+    enhancer.forget_image(A_COVER_URL)
+
+    assert not enhancer.gave_up(A_COVER_URL)
+    assert enhancer.gave_up(ANOTHER_COVER_URL)
+    server.answers = [a_generated_image()]
+    assert await enhancer.enhance(ANOTHER_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+    assert len(server.requests) == 3
+    # An image never given up on is no error.
+    enhancer.forget_image("https://i.scdn.co/image/never-seen")

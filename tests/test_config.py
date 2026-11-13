@@ -27,7 +27,7 @@ SETTING_KEYS = (
     "SPOTIFY_TOKEN_FILE",
     "COVER_CACHE_DIR",
     "OPENROUTER_API_KEY",
-    "OPENROUTER_MODEL",
+    "MODEL_LIST_FILE",
     "OWNER_SETTINGS_FILE",
     "AI_SPEND_FILE",
     ENV_FILE_VARIABLE,
@@ -266,16 +266,16 @@ def test_an_openrouter_key_is_read_and_kept_secret(
     assert AN_OPENROUTER_KEY not in str(settings)
 
 
-def test_the_openrouter_model_defaults_to_the_proof_of_concepts(clean_env: None) -> None:
-    assert Settings(_env_file=None).openrouter_model == "black-forest-labs/flux-3-image-klein"
+def test_the_model_list_defaults_to_the_checkouts_models_txt(clean_env: None) -> None:
+    assert Settings(_env_file=None).model_list_file == Path("models.txt")
 
 
-def test_the_openrouter_model_is_read_from_the_environment(
-    clean_env: None, monkeypatch: pytest.MonkeyPatch
+def test_the_model_list_file_is_read_from_the_environment(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("OPENROUTER_MODEL", "qwen/qwen-image-2.1-pro")
+    monkeypatch.setenv("MODEL_LIST_FILE", str(tmp_path / "models.txt"))
 
-    assert Settings(_env_file=None).openrouter_model == "qwen/qwen-image-2.1-pro"
+    assert Settings(_env_file=None).model_list_file == tmp_path / "models.txt"
 
 
 def test_without_an_openrouter_key_enhancement_is_unavailable(clean_env: None) -> None:

@@ -624,7 +624,7 @@ def an_enhancing_loader(
     enhancer = Enhancer(
         client,
         "sk-or-v1-test-key",
-        "a/model",
+        lambda: "a/model",
         SIZE,
         ledger=ledger or MemoryLedger(),
         daily_limit=lambda: daily_limit,

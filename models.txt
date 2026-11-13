@@ -1,0 +1,5 @@
+# The OpenRouter image models the owner can pick from on the status page,
+# one model id per line. Blank lines and lines starting with # are ignored.
+# The first id is the default: it is used until the owner picks another, and
+# whenever the saved pick is no longer in this list.
+black-forest-labs/flux-3-image-klein
