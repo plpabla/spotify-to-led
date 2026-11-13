@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # The owner's choices from the status page, rewritten whenever one changes,
     # so like the token file it is runtime state kept apart from the env file.
     owner_settings_file: Path = Path("var/settings.json")
+    # Today's AI cover spend, rewritten after every paid generation, so it is
+    # runtime state like the owner's settings.
+    ai_spend_file: Path = Path("var/ai-spend.json")
 
     @property
     def spotify_enabled(self) -> bool:

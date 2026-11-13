@@ -33,6 +33,7 @@ from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.owner_settings import OwnerSettings
 from spotify_to_led.rendering import render_cover, render_enhanced
+from spotify_to_led.spend import SpendLedger
 from spotify_to_led.display import (
     IDLE,
     NO_ARTWORK,
@@ -1075,7 +1076,15 @@ def a_real_loader(network: ScriptedNetwork, root: Path) -> CoverLoader:
     async def no_wait(seconds: float) -> None:
         return None
 
-    enhancer = Enhancer(client, "sk-or-v1-test-key", "a/model", SIZE, sleep=no_wait)
+    enhancer = Enhancer(
+        client,
+        "sk-or-v1-test-key",
+        "a/model",
+        SIZE,
+        ledger=SpendLedger(root / "ai-spend.json"),
+        daily_limit=lambda: 1.0,
+        sleep=no_wait,
+    )
     return CoverLoader(client, SIZE, cache=FrameCache(root, SIZE), enhancer=enhancer)
 
 

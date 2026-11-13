@@ -597,6 +597,19 @@ class Clock:
         return self.now
 
 
+class MemoryLedger:
+    """Today's spend held in memory, standing in for a `SpendLedger` and its file."""
+
+    def __init__(self, spent: float = 0.0) -> None:
+        self.spent = spent
+
+    def spent_today(self) -> float:
+        return self.spent
+
+    def record(self, cost: float) -> None:
+        self.spent += cost
+
+
 def an_enhancing_loader(
     images: ImageServer,
     openrouter: ImageServer,
@@ -604,6 +617,8 @@ def an_enhancing_loader(
     *,
     clock: Clock | None = None,
     enhancer_sleep: InstantSleep | None = None,
+    ledger: MemoryLedger | None = None,
+    daily_limit: float = 1.0,
 ) -> tuple[CoverLoader, Enhancer]:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(Network(images, openrouter)))
     enhancer = Enhancer(
@@ -611,6 +626,8 @@ def an_enhancing_loader(
         "sk-or-v1-test-key",
         "a/model",
         SIZE,
+        ledger=ledger or MemoryLedger(),
+        daily_limit=lambda: daily_limit,
         clock=clock or Clock(AFTERNOON),
         sleep=enhancer_sleep or InstantSleep(),
     )
@@ -910,6 +927,62 @@ async def test_a_credit_refusal_shows_plain_covers_with_no_request_until_midnigh
     assert loader.state(B_PLAIN_URL).status is CoverStatus.GENERATING
     await until(lambda: loader.state(B_PLAIN_URL).enhanced)
     assert len(openrouter.requests) == 2
+    await loader.aclose()
+
+
+async def test_with_the_limit_reached_a_cover_is_plain_at_once_with_no_source_or_request(
+    tmp_path: Path,
+) -> None:
+    images = ImageServer([a_cover()])
+    openrouter = ImageServer([])
+    ledger = MemoryLedger(1.0)
+    loader, enhancer = an_enhancing_loader(
+        images, openrouter, FrameCache(tmp_path, SIZE), ledger=ledger, daily_limit=1.0
+    )
+    assert enhancer.limit_reached
+
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    # Inside `want`'s task, straight to plain: no generating marker on the way.
+    assert loader.state(A_PLAIN_URL).status is CoverStatus.PENDING
+    await until(lambda: loader.state(A_PLAIN_URL).status is CoverStatus.READY)
+
+    state = loader.state(A_PLAIN_URL)
+    assert state.enhanced is False
+    assert colours(state.frame) == colours(PLAIN_FRAME)
+    assert images.urls == [A_PLAIN_URL]
+    assert openrouter.requests == []
+
+    # Known plain, wanted again: plain at once, still nothing downloaded or asked.
+    loader.want(None)
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    assert (loader.state(A_PLAIN_URL).status, loader.state(A_PLAIN_URL).enhanced) == (
+        CoverStatus.READY,
+        False,
+    )
+    await asyncio.sleep(0)
+    assert images.urls == [A_PLAIN_URL]
+    assert openrouter.requests == []
+    await loader.aclose()
+
+
+async def test_with_the_limit_reached_a_cached_enhanced_cover_still_shows(
+    tmp_path: Path,
+) -> None:
+    cache = FrameCache(tmp_path, SIZE)
+    cache.store(A_PLAIN_URL, ENHANCED_FRAME, enhanced=True)
+    images, openrouter = ImageServer([]), ImageServer([])
+    loader, _ = an_enhancing_loader(
+        images, openrouter, cache, ledger=MemoryLedger(5.0), daily_limit=1.0
+    )
+
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+
+    state = loader.state(A_PLAIN_URL)
+    assert (state.status, state.enhanced) == (CoverStatus.READY, True)
+    assert colours(state.frame) == colours(ENHANCED_FRAME)
+    await asyncio.sleep(0)
+    assert images.requests == []
+    assert openrouter.requests == []
     await loader.aclose()
 
 

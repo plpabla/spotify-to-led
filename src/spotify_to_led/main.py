@@ -41,6 +41,7 @@ test suite start the same app the Pi does.
 
 import asyncio
 import logging
+import math
 import re
 import sys
 from collections.abc import AsyncIterator
@@ -48,13 +49,20 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import httpx2
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    StrictFloat,
+    field_validator,
+    model_validator,
+)
 
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.transport import BoardTransport, LinkState
@@ -71,6 +79,7 @@ from spotify_to_led.display import (
 from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
+from spotify_to_led.spend import SpendLedger
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
 from spotify_to_led.spotify.reader import AuthorizationStateMismatch, SpotifyReader
@@ -162,6 +171,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 settings.openrouter_api_key.get_secret_value(),
                 settings.openrouter_model,
                 settings.board_size,
+                ledger=SpendLedger(settings.ai_spend_file),
+                # Read at every check, so a limit saved from the page applies
+                # to the next cover.
+                daily_limit=lambda: app.state.owner_settings.daily_limit_usd,
             )
         covers = CoverLoader(
             spotify_client,
@@ -347,17 +360,38 @@ async def status(request: Request) -> dict[str, Any]:
 
 
 class SettingsChange(BaseModel):
-    """The body of `PUT /settings`: exactly one strict boolean, nothing else."""
+    """The body of `PUT /settings`: the choices to change, at least one, nothing else.
 
-    # A misspelt field is refused rather than silently dropped, and
-    # `StrictBool` refuses `"false"` or `0` rather than coercing them.
+    A choice left out keeps its saved value.
+    """
+
+    # A misspelt field is refused rather than silently dropped, and the
+    # strict types refuse `"false"`, `0` or `"1"` rather than coercing them.
     model_config = ConfigDict(extra="forbid")
 
-    ai_enhanced: StrictBool
+    ai_enhanced: StrictBool | None = None
+    daily_limit_usd: StrictFloat | None = None
+
+    @field_validator("daily_limit_usd")
+    @classmethod
+    def _limit_is_a_positive_amount(cls, value: float | None) -> float | None:
+        """Refuse a limit of zero, below it, or not finite: none is an amount to stop at."""
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            raise ValueError("daily_limit_usd must be a finite amount greater than 0")
+        return value
+
+    @model_validator(mode="after")
+    def _changes_something(self) -> Self:
+        """Refuse a body that names no choice, which would save nothing new."""
+        if self.ai_enhanced is None and self.daily_limit_usd is None:
+            raise ValueError("name at least one of ai_enhanced and daily_limit_usd")
+        return self
 
 
 @app.put("/settings", response_model=None)
-async def put_settings(request: Request, change: SettingsChange) -> dict[str, bool] | Response:
+async def put_settings(
+    request: Request, change: SettingsChange
+) -> dict[str, bool | float] | Response:
     """Save the owner's choices and answer with what was saved.
 
     Ungated like every route: the only gate is Cloudflare Access at the edge.
@@ -367,14 +401,23 @@ async def put_settings(request: Request, change: SettingsChange) -> dict[str, bo
     type already refuses any other body, or one with no content type, with a
     422 before this runs; `tests/test_app.py` holds it to that.
     """
-    if change.ai_enhanced and not request.app.state.enhance_available:
+    if change.ai_enhanced is True and not request.app.state.enhance_available:
         return PlainTextResponse(
             "AI-enhanced covers need an OpenRouter key (OPENROUTER_API_KEY), "
             "and none is configured.",
             status_code=409,
         )
     previous: OwnerSettings = request.app.state.owner_settings
-    updated = OwnerSettings(ai_enhanced=change.ai_enhanced)
+    updated = OwnerSettings(
+        ai_enhanced=(
+            change.ai_enhanced if change.ai_enhanced is not None else previous.ai_enhanced
+        ),
+        daily_limit_usd=(
+            change.daily_limit_usd
+            if change.daily_limit_usd is not None
+            else previous.daily_limit_usd
+        ),
+    )
     try:
         request.app.state.owner_settings_store.save(updated)
     except OSError as failure:
@@ -384,10 +427,11 @@ async def put_settings(request: Request, change: SettingsChange) -> dict[str, bo
         return PlainTextResponse("The setting could not be saved.", status_code=500)
     request.app.state.owner_settings = updated
     enhancer: Enhancer | None = request.app.state.enhancer
-    if enhancer is not None and updated != previous:
+    if enhancer is not None and updated.ai_enhanced != previous.ai_enhanced:
         # A flip is the owner's way to ask again for the covers given up on.
+        # A new limit is not: it is about money, not about those images.
         enhancer.forget()
-    return {"ai_enhanced": updated.ai_enhanced}
+    return {"ai_enhanced": updated.ai_enhanced, "daily_limit_usd": updated.daily_limit_usd}
 
 
 def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> dict[str, Any]:

@@ -45,10 +45,16 @@ loader calls. It hands back a finished board frame, shrunk with
 - `EnhanceRefused` pauses every generation, for every image, until the next
   00:00 UTC, which is when a daily key limit resets. A key that is simply
   wrong is refused the same way, and asked again once a day.
+- Once today's spend, the costs OpenRouter reported for the day's successful
+  calls as a `SpendLedger` counts them, reaches the owner's daily limit, no
+  generation starts until the next 00:00 UTC or until the limit is raised.
+  It is checked once, before the first attempt, so the call that crosses the
+  limit is allowed and its retries are not cut short.
 
 Each image's outcome is logged once, naming the image's URL: INFO with the
 cost on success, a WARNING when the enhancer gives up or pauses. A retry is an
-INFO line of its own. The key is in none of them.
+INFO line of its own, and so is an image not started because the limit is
+reached. The key is in none of them.
 """
 
 import asyncio
@@ -59,12 +65,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from io import BytesIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx2
 from PIL import Image
 
 from spotify_to_led.rendering import render_enhanced
+
+if TYPE_CHECKING:
+    # Only for the annotation: `spend` imports this module's clock and midnight.
+    from spotify_to_led.spend import SpendLedger
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +290,8 @@ class Enhancer:
         model: str,
         size: int,
         *,
+        ledger: SpendLedger,
+        daily_limit: Callable[[], float],
         clock: Clock = _utc_now,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
@@ -287,6 +299,10 @@ class Enhancer:
         self._api_key = api_key
         self._model = model
         self._size = size
+        self._ledger = ledger
+        # A callable, read at every check, so a limit changed from the page
+        # applies to the next cover.
+        self._daily_limit = daily_limit
         self._clock = clock
         self._sleep = sleep
         self._paused_until: datetime | None = None
@@ -298,6 +314,16 @@ class Enhancer:
         if self._paused_until is not None and self._clock() < self._paused_until:
             return self._paused_until
         return None
+
+    @property
+    def spent_today(self) -> float:
+        """What today's (UTC) generations have cost so far, in USD."""
+        return self._ledger.spent_today()
+
+    @property
+    def limit_reached(self) -> bool:
+        """Whether today's spend is at or over the owner's daily limit, so nothing starts."""
+        return self._ledger.spent_today() >= self._daily_limit()
 
     def gave_up(self, url: str) -> bool:
         """Whether the image at `url` failed for good since the last `forget()`."""
@@ -314,10 +340,19 @@ class Enhancer:
         """Return `source`, the image at `url` of type `mime`, as an enhanced board frame.
 
         `None` means the plain cover is to be shown instead: generation is
-        paused, the image was given up on before, or it is given up on now.
-        Makes no request in the first two cases.
+        paused, the image was given up on before, today's limit is reached,
+        or the image is given up on now. Makes no request in the first three
+        cases.
         """
         if self.paused_until is not None or self.gave_up(url):
+            return None
+        if self.limit_reached:
+            logger.info(
+                "not enhancing %s: today's AI spend $%.4f has reached the daily limit of $%.2f",
+                url,
+                self.spent_today,
+                self._daily_limit(),
+            )
             return None
         for attempt in range(1, ENHANCE_ATTEMPTS + 1):
             try:
@@ -371,6 +406,8 @@ class Enhancer:
             else:
                 cost = f"${generated.cost:.4f}" if generated.cost is not None else "not reported"
                 logger.info("cover enhanced: %s (cost %s)", url, cost)
+                if generated.cost is not None:
+                    self._ledger.record(generated.cost)
                 # Off the event loop for the same reason as the decode.
                 return await asyncio.to_thread(render_enhanced, generated.image, self._size)
         # The loop returns on its last attempt whatever the outcome.

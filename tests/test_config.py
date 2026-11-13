@@ -29,6 +29,7 @@ SETTING_KEYS = (
     "OPENROUTER_API_KEY",
     "OPENROUTER_MODEL",
     "OWNER_SETTINGS_FILE",
+    "AI_SPEND_FILE",
     ENV_FILE_VARIABLE,
 )
 
@@ -293,3 +294,15 @@ def test_the_owner_settings_file_defaults_to_the_checkout_var_directory(
     clean_env: None,
 ) -> None:
     assert Settings(_env_file=None).owner_settings_file == Path("var/settings.json")
+
+
+def test_the_ai_spend_file_defaults_to_the_checkout_var_directory(clean_env: None) -> None:
+    assert Settings(_env_file=None).ai_spend_file == Path("var/ai-spend.json")
+
+
+def test_the_ai_spend_file_is_read_from_the_environment(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AI_SPEND_FILE", str(tmp_path / "spend.json"))
+
+    assert Settings(_env_file=None).ai_spend_file == tmp_path / "spend.json"
