@@ -29,7 +29,7 @@ page say the dot is up.
 | --- | --- | --- |
 | What shows while generating | The plain cover, not the placeholder | It is already in hand and is the right album |
 | On-board hint | A dot over the plain cover while generating | The owner wants to see from the board that an upgrade is coming |
-| Dot design | 1x1 cell (2 px on 32x32), green, 1 px black ring, top-left | Green already means "on its way"; half the amber marker's size and in the other top corner, so the two never read alike |
+| Dot design | 1x1 cell (2 px on 32x32), green, one pixel in from the top-left corner, no ring (the ring was dropped after the board check) | Green already means "on its way"; half the amber marker's size and in the other top corner, so the two never read alike |
 | Dot colour | A green dimmer than the placeholder's, tuned on the Pi | Glyph colours on this board are judged on the real board |
 | Changeover while the plain frame downloads | Unchanged: previous presentation kept | Not part of this change; the plain frame is not on hand yet |
 | Failed plain download | Unchanged: placeholder | There is no cover to show |

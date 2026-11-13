@@ -351,11 +351,11 @@ None. No stored data changes; `/status` gains a field.
 
 #### Automated
 
-- [ ] 3.1 Full suite passes after any colour change: `uv run pytest`
+- [x] 3.1 Full suite passes after any colour change: `uv run pytest`
 
 #### Manual
 
-- [ ] 3.2 On the real board, a never-seen cover shows plain with the green dot, then the enhanced cover
-- [ ] 3.3 The dot is visible over dark and bright covers and does not read as the staleness marker
-- [ ] 3.4 Switching off while generating and on over a plain cover behave as specified
-- [ ] 3.5 Outcome and final colour recorded in verification.md
+- [x] 3.2 On the real board, a never-seen cover shows plain with the green dot, then the enhanced cover
+- [x] 3.3 The dot is visible over dark and bright covers and does not read as the staleness marker
+- [x] 3.4 Switching off while generating and on over a plain cover behave as specified
+- [x] 3.5 Outcome and final colour recorded in verification.md
