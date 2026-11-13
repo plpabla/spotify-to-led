@@ -37,7 +37,7 @@
   <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
   <section id="reading"><h2>Reading Spotify</h2></section>
   <section id="board"><h2>Board</h2></section>
-  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><div id="enhance-spend" hidden><p id="enhance-spend-line"></p><div class="bar"><div id="enhance-spend-fill"></div></div></div><form id="enhance-limit-form" class="limit" hidden><label for="enhance-limit">Daily limit</label><span class="money"><span class="muted">$</span><input type="number" id="enhance-limit" min="0.001" step="0.001" required></span><button type="submit" id="enhance-limit-save" class="action">Save</button></form><p id="enhance-model-row" class="limit" hidden><label for="enhance-model">Model</label><select id="enhance-model"></select></p><p id="enhance-note" class="muted"></p></section>
+  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><div id="enhance-spend" hidden><p id="enhance-spend-line"></p><div class="bar"><div id="enhance-spend-fill"></div></div></div><form id="enhance-limit-form" class="limit" hidden><label for="enhance-limit">Daily limit</label><span class="money"><span class="muted">$</span><input type="number" id="enhance-limit" min="0.001" step="0.001" required></span><button type="submit" id="enhance-limit-save" class="action">Save</button></form><p id="enhance-model-row" class="limit" hidden><label for="enhance-model">Model</label><select id="enhance-model"></select></p><p id="enhance-regenerate-row" hidden><button type="button" id="enhance-regenerate" class="action" disabled>Regenerate cover</button></p><p id="enhance-note" class="muted"></p></section>
   <section id="authorization" hidden><h2>Spotify authorization</h2></section>
 </div>
 <script>
@@ -167,6 +167,8 @@ let limitSaving = false;
 let modelChanges = 0;
 let modelSaving = false;
 let modelList = null;
+// Whether a regeneration request is in flight, so a second click cannot start another.
+let regenerating = false;
 
 // The board's own spend bar thresholds and colours (frames.SPEND_BAR_*).
 const SPEND_BAR_AMBER_FROM = 0.75;
@@ -207,6 +209,13 @@ function renderEnhancement(data, changesAtFetch, limitChangesAtFetch, modelChang
     }
     model.value = enhancement.model;
   }
+  // Only a finished cover can be redrawn, and only while generation may run.
+  document.getElementById("enhance-regenerate-row").hidden = !enhancement.available;
+  document.getElementById("enhance-regenerate").disabled = regenerating
+    || !enhancement.enabled
+    || !["enhanced", "plain", "gave_up"].includes(enhancement.cover)
+    || Boolean(enhancement.paused_until)
+    || spend.limit_reached;
   const showSpend = enhancement.available && spend.spent_usd !== null;
   document.getElementById("enhance-spend").hidden = !showSpend;
   if (showSpend) {
@@ -313,6 +322,32 @@ document.getElementById("enhance-model").addEventListener("change", async (event
     modelChanges += 1;
     modelSaving = false;
     model.disabled = false;
+  }
+});
+
+document.getElementById("enhance-regenerate").addEventListener("click", async (event) => {
+  const button = event.target;
+  regenerating = true;
+  enhanceError = null;
+  button.disabled = true;
+  try {
+    const response = await fetch("/regenerate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    // The service says why it refused, in plain text.
+    if (!response.ok) enhanceError = (await response.text()) || "The cover could not be regenerated.";
+  } catch (error) {
+    enhanceError = "The cover could not be regenerated.";
+  } finally {
+    if (enhanceError) {
+      const note = document.getElementById("enhance-note");
+      note.textContent = enhanceError;
+      note.className = "bad";
+    }
+    // The next poll enables the button again once the cover is finished.
+    regenerating = false;
   }
 });
 

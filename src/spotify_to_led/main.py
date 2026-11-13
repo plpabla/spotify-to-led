@@ -40,7 +40,11 @@ written through `PUT /settings`, which keeps them in `OWNER_SETTINGS_FILE` so
 they survive a restart, and takes only a model the list names. A flip of the
 switch, or a change of the model in use, also makes the enhancer forget the
 images it gave up on, so switching off and on is how the owner asks for
-another try.
+another try. `POST /regenerate` asks for the cover now on show to be
+generated again with the model in use, replacing its kept enhanced frame;
+like `PUT /settings` it takes only a JSON body, and it starts nothing while
+enhancement is off, paused or over today's limit, or no finished cover is on
+show.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
@@ -469,6 +473,47 @@ async def put_settings(
         "daily_limit_usd": updated.daily_limit_usd,
         "model": updated.model,
     }
+
+
+class RegenerateRequest(BaseModel):
+    """The body of `POST /regenerate`: an empty JSON object.
+
+    It carries nothing; requiring it is what makes the route JSON-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@app.post("/regenerate", status_code=202, response_model=None)
+async def regenerate(request: Request, body: RegenerateRequest) -> dict[str, bool] | Response:
+    """Generate the cover now on show again, with the model in use.
+
+    This spends money, so like `PUT /settings` it takes only an
+    `application/json` body, which a cross-site form or `text/plain` post
+    cannot send without a CORS preflight; anything else is a 422 before this
+    runs. Every refusal is a 409 with nothing started.
+    """
+    enhancer: Enhancer | None = request.app.state.enhancer
+    covers: CoverLoader | None = request.app.state.covers
+    saved: OwnerSettings = request.app.state.owner_settings
+    if (
+        enhancer is None
+        or covers is None
+        or not saved.ai_enhanced
+        or not request.app.state.enhance_available
+    ):
+        return PlainTextResponse("AI-enhanced covers are not switched on.", status_code=409)
+    if enhancer.paused_until is not None:
+        return PlainTextResponse("Generation is paused.", status_code=409)
+    if enhancer.limit_reached:
+        return PlainTextResponse("Today's AI spend limit is reached.", status_code=409)
+    reader = _reader(request)
+    snapshot = reader.snapshot if reader is not None else None
+    url = wanted_cover_url(snapshot, request.app.state.board_size)
+    source = enhancement_source_url(snapshot)
+    if url is None or source is None or not covers.regenerate(url, source):
+        return PlainTextResponse("No finished cover to regenerate right now.", status_code=409)
+    return {"regenerating": True}
 
 
 def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> dict[str, Any]:

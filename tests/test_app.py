@@ -10,11 +10,14 @@ its Spotify routes say so. With one, every Spotify request goes to a
 """
 
 import asyncio
+import base64
 import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -30,6 +33,7 @@ from spotify_to_led.board.transport import LinkState, frame_to_pixel_colors
 from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
 from spotify_to_led.covers import CoverState, CoverStatus
 from spotify_to_led.enhance import Enhancer
+from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spend import SpendLedger
 from spotify_to_led.spotify.auth import AUTHORIZE_URL, SCOPE, TOKEN_URL
@@ -1489,3 +1493,207 @@ def test_status_reports_whether_the_cover_last_sent_was_enhanced_or_generating(
         "enhanced": enhanced,
         "generating": generating,
     }
+
+
+# `POST /regenerate`, against the lifespan's own loader and enhancer, whose
+# shared client reaches a scripted network. The display loop is replaced by a
+# no-op, so the test alone decides what the loader wants; the reader is
+# swapped for a fixed snapshot, as for `/status` above.
+
+
+def _png_bytes(colour: tuple[int, int, int]) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (64, 64), colour).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class RegenerationNetwork:
+    """Answers OpenRouter with a generation, the image CDN with a cover, and Spotify as `FakeSpotify`."""
+
+    def __init__(self) -> None:
+        self.generations: list[httpx2.Request] = []
+        self._spotify = FakeSpotify()
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == "openrouter.ai":
+            self.generations.append(request)
+            encoded = base64.b64encode(_png_bytes((250, 250, 0))).decode("ascii")
+            return httpx2.Response(
+                200, json={"data": [{"b64_json": encoded}], "usage": {"cost": 0.01}}
+            )
+        if request.url.host == "i.scdn.co":
+            return httpx2.Response(
+                200, content=_png_bytes((200, 40, 90)), headers={"content-type": "image/png"}
+            )
+        return self._spotify(request)
+
+
+def use_regeneration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    key: bool = True,
+    settings: dict[str, object] | None = None,
+    spent: float = 0.0,
+) -> RegenerationNetwork:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    if key:
+        use_openrouter_key(monkeypatch)
+    network = RegenerationNetwork()
+    monkeypatch.setattr(
+        main,
+        "create_spotify_client",
+        lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(network)),
+    )
+
+    async def no_display(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(main, "run_display", no_display)
+    var = tmp_path / "var"
+    var.mkdir()
+    (var / "settings.json").write_text(
+        json.dumps(settings if settings is not None else {"ai_enhanced": True}), encoding="utf-8"
+    )
+    today = datetime.now(UTC).date().isoformat()
+    (var / "ai-spend.json").write_text(
+        json.dumps({"day": today, "spent_usd": spent}), encoding="utf-8"
+    )
+    # The cover already enhanced once, both entries kept, as on a second sighting.
+    cache = FrameCache(var / "covers", 32)
+    cache.store(SMALL_COVER, Image.new("RGB", (32, 32), (200, 40, 90)))
+    cache.store(SMALL_COVER, Image.new("RGB", (32, 32), (10, 120, 250)), enhanced=True)
+    return network
+
+
+def show(client: TestClient, snapshot: PlaybackSnapshot) -> None:
+    """Make `snapshot` the believed state and want its cover, as the display would."""
+    main.app.state.spotify_reader = FakeReader(snapshot)
+    covers = main.app.state.covers
+    url = display.wanted_cover_url(snapshot, 32)
+    source = display.enhancement_source_url(snapshot)
+
+    async def want() -> None:
+        covers.want(url, enhance_from=source)
+
+    client.portal.call(want)
+
+
+def wait_for(condition: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 5.0
+    while not condition():
+        assert time.monotonic() < deadline, "the condition never held"
+        time.sleep(0.005)
+
+
+def test_regenerate_redraws_the_cover_on_show_with_the_model_in_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    network = use_regeneration(monkeypatch, tmp_path)
+
+    with TestClient(main.app) as client:
+        assert client.put("/settings", json={"model": SECOND_MODEL}).status_code == 200
+        show(client, playing())
+        covers = main.app.state.covers
+        assert covers.state(SMALL_COVER).enhanced is True
+        response = client.post("/regenerate", json={})
+        wait_for(lambda: covers.state(SMALL_COVER).status is CoverStatus.READY)
+        state = covers.state(SMALL_COVER)
+
+    assert (response.status_code, response.json()) == (202, {"regenerating": True})
+    [request] = network.generations
+    assert json.loads(request.content)["model"] == SECOND_MODEL
+    assert state.enhanced is True
+    assert frame_to_pixel_colors(state.frame)[0] != (10, 120, 250)
+
+
+@pytest.mark.parametrize(
+    ("key", "settings", "spent", "snapshot", "paused", "message"),
+    [
+        (True, {"ai_enhanced": False}, 0.0, playing(), False, "not switched on"),
+        (False, {"ai_enhanced": True}, 0.0, playing(), False, "not switched on"),
+        (True, {"ai_enhanced": True}, 0.0, playing(), True, "paused"),
+        (True, {"ai_enhanced": True}, 1.0, playing(), False, "limit is reached"),
+        (
+            True,
+            {"ai_enhanced": True},
+            0.0,
+            playing(status=PlaybackStatus.NOTHING_PLAYING),
+            False,
+            "No finished cover",
+        ),
+        (True, {"ai_enhanced": True}, 0.0, playing(artwork=False), False, "No finished cover"),
+    ],
+    ids=["switched off", "no key", "paused", "limit reached", "nothing playing", "no artwork"],
+)
+def test_regenerate_is_a_409_that_starts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    key: bool,
+    settings: dict[str, object],
+    spent: float,
+    snapshot: PlaybackSnapshot,
+    paused: bool,
+    message: str,
+) -> None:
+    network = use_regeneration(monkeypatch, tmp_path, key=key, settings=settings, spent=spent)
+
+    with TestClient(main.app) as client:
+        if main.app.state.covers is not None:
+            show(client, snapshot)
+        enhancer = main.app.state.enhancer
+        if paused:
+            enhancer._paused_until = datetime.now(UTC) + timedelta(days=1)
+        response = client.post("/regenerate", json={})
+        covers = main.app.state.covers
+        state = covers.state(SMALL_COVER) if covers is not None else None
+
+    assert response.status_code == 409
+    assert message in response.text
+    assert network.generations == []
+    if state is not None and snapshot.item is not None and snapshot.item.artwork:
+        assert state.status is not CoverStatus.GENERATING
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body"),
+    [
+        ("text/plain", "{}"),
+        ("text/plain;charset=UTF-8", "{}"),
+        ("application/x-www-form-urlencoded", ""),
+        (None, "{}"),
+        ("application/json", '{"model": "b/second-model"}'),
+        ("application/json", "[]"),
+    ],
+    ids=["text", "text utf-8", "form", "no type", "non-empty object", "not an object"],
+)
+def test_regenerate_refuses_anything_but_an_empty_json_object(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content_type: str | None, body: str
+) -> None:
+    network = use_regeneration(monkeypatch, tmp_path)
+    headers = {"content-type": content_type} if content_type is not None else {}
+
+    with TestClient(main.app) as client:
+        show(client, playing())
+        response = client.post("/regenerate", content=body.encode(), headers=headers)
+        state = main.app.state.covers.state(SMALL_COVER)
+
+    assert response.status_code == 422
+    assert (state.status, state.enhanced) == (CoverStatus.READY, True)
+    assert network.generations == []
+
+
+def test_the_status_page_regenerates_through_post_regenerate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        page = client.get("/").text
+
+    assert 'id="enhance-regenerate"' in page
+    assert ">Regenerate cover</button>" in page
+    assert 'fetch("/regenerate"' in page
+    assert 'method: "POST"' in page
+    assert "body: JSON.stringify({})" in page

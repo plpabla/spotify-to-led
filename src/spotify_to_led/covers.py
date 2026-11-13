@@ -52,6 +52,16 @@ enhanced cover goes:
 A generation is cancelled like a download when something else is wanted, and
 its frame is stored only if its cover is still wanted, enhanced.
 
+The owner can also ask for the wanted cover to be generated again, with
+whichever model is in use now (`regenerate`), but only while it is `READY`,
+so never over a download or a generation already running. The source is
+dropped from the enhancer's give-up memory first, then the cover goes the
+same way as above: `PENDING` only if its plain frame is neither in memory
+nor in the cache, then `GENERATING` with the plain frame, then `READY`. On
+success the new frame replaces the image's enhanced entry. When the enhancer
+answers `None`, an enhanced frame that was on show before comes back, and
+its entry is left as it was; only a cover that was plain goes back to plain.
+
 The log lines say what happened to a cover, and nothing but the URL
 identifies it: INFO when a cover is ready, saying so when it came from the
 cache, a WARNING per failed attempt with its cause and the wait, with a
@@ -266,6 +276,36 @@ class CoverLoader:
             self._state = CoverState(CoverStatus.GENERATING, plain)
         self._task = asyncio.create_task(self._load(url, enhance_from, plain))
 
+    def regenerate(self, url: str, enhance_from: str) -> bool:
+        """Make the wanted cover's enhanced frame again; whether it was started.
+
+        Only for the pair wanted now, with an enhancer that may generate now,
+        and a cover that is `READY`: anything else returns `False` and changes
+        nothing. Must be called from a running event loop, like `want`.
+        """
+        enhancer = self._enhancer
+        if (
+            enhancer is None
+            or not self._wanted(url, enhance_from)
+            or self._state.status is not CoverStatus.READY
+            or enhancer.paused_until is not None
+            or enhancer.limit_reached
+        ):
+            return False
+        # An earlier give-up on this image must not answer the owner's request.
+        enhancer.forget_image(enhance_from)
+        fallback = self._state.frame if self._state.enhanced else None
+        plain = self._plain
+        if plain is None and self._cache is not None:
+            plain = self._cache.load(url)
+            if plain is not None:
+                self._plain = plain
+        # `READY` runs no task, so there is nothing to cancel.
+        self._state = PENDING if plain is None else CoverState(CoverStatus.GENERATING, plain)
+        logger.info("regenerating the enhanced cover of %s", url)
+        self._task = asyncio.create_task(self._load(url, enhance_from, plain, fallback=fallback))
+        return True
+
     def state(self, url: str) -> CoverState:
         """The state of `url`: pending unless it is the wanted cover."""
         return self._state if url == self._url else PENDING
@@ -303,10 +343,17 @@ class CoverLoader:
         return self._url == url and self._enhance_from == enhance_from
 
     async def _load(
-        self, url: str, enhance_from: str | None = None, plain: Image.Image | None = None
+        self,
+        url: str,
+        enhance_from: str | None = None,
+        plain: Image.Image | None = None,
+        *,
+        fallback: Image.Image | None = None,
     ) -> None:
         """Fetch `url` until it succeeds, unless its frame is given, then enhance if asked.
 
+        `fallback`, an enhanced frame already made for `url`, is the answer
+        instead of the plain frame when no new enhanced one comes of it.
         Only cancellation ends it early.
         """
         if plain is None:
@@ -344,7 +391,7 @@ class CoverLoader:
                 # copy at display time, never into the stored frame.
                 self._cache.store(url, plain)
             if not self._will_enhance(enhance_from):
-                self._state = CoverState(CoverStatus.READY, plain)
+                self._state = self._unenhanced(plain, fallback)
                 logger.info("cover ready: %s", url)
                 return
             logger.info("cover ready: %s; enhancing it", url)
@@ -354,11 +401,18 @@ class CoverLoader:
         if not self._wanted(url, enhance_from):
             return
         if enhanced is None:
-            self._state = CoverState(CoverStatus.READY, plain)
+            self._state = self._unenhanced(plain, fallback)
             return
         self._state = CoverState(CoverStatus.READY, enhanced, enhanced=True)
         if self._cache is not None:
             self._cache.store(url, enhanced, enhanced=True)
+
+    @staticmethod
+    def _unenhanced(plain: Image.Image, fallback: Image.Image | None) -> CoverState:
+        """`READY` with no new enhanced frame: the one made before, if any, else plain."""
+        if fallback is not None:
+            return CoverState(CoverStatus.READY, fallback, enhanced=True)
+        return CoverState(CoverStatus.READY, plain)
 
     async def _enhance(self, source_url: str) -> Image.Image | None:
         """The enhanced frame made from the image at `source_url`, or `None` for plain."""
