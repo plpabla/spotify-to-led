@@ -362,14 +362,14 @@ The existing `var/settings.json` (`{"ai_enhanced": true}`) loads with the $1.00 
 
 #### Automated
 
-- [x] 3.1 Full suite passes: `uv run pytest`
-- [x] 3.2 `/status` reports `spend` with and without a key, `limit_reached` true once the ledger is at the limit, and the page contains the limit form's `PUT /settings` call: `uv run pytest tests/test_app.py`
+- [x] 3.1 Full suite passes: `uv run pytest` — a5d3f07
+- [x] 3.2 `/status` reports `spend` with and without a key, `limit_reached` true once the ledger is at the limit, and the page contains the limit form's `PUT /settings` call: `uv run pytest tests/test_app.py` — a5d3f07
 
 #### Manual
 
-- [ ] 3.3 On the status page, the spend line and bar match `var/ai-spend.json`, and the bar's colour changes as the limit is lowered past 75 % and 90 % of today's spend
-- [ ] 3.4 Saving a limit below today's spend makes the next new cover stay plain, and the page says the limit is reached and when it resets; raising it again lets the next new cover generate
-- [ ] 3.5 A poll during typing in the limit field does not overwrite what is typed
+- [x] 3.3 On the status page, the spend line and bar match `var/ai-spend.json`, and the bar's colour changes as the limit is lowered past 75 % and 90 % of today's spend — a5d3f07
+- [x] 3.4 Saving a limit below today's spend makes the next new cover stay plain, and the page says the limit is reached and when it resets; raising it again lets the next new cover generate — a5d3f07
+- [x] 3.5 A poll during typing in the limit field does not overwrite what is typed — a5d3f07
 
 ### Phase 4: Docs
 

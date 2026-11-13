@@ -18,7 +18,13 @@
   .promoted { border: 2px solid #a40000; }
   .bar { height: 0.6rem; background: #000; border-radius: 3px; overflow: hidden; margin: 0.25rem 0; }
   .bar > div { height: 100%; width: 0; }
-  a.action { display: inline-block; margin: 0.4rem 0; padding: 0.4rem 0.8rem; background: #1db954; color: #000; border-radius: 4px; text-decoration: none; font-weight: 600; }
+  .action { display: inline-block; margin: 0.4rem 0; padding: 0.4rem 0.8rem; background: #1db954; color: #000; border: 0; border-radius: 4px; text-decoration: none; font: inherit; font-weight: 600; cursor: pointer; }
+  .action:disabled { opacity: 0.5; cursor: default; }
+  .limit { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.25rem 0; }
+  .limit[hidden] { display: none; }
+  .limit .money { display: inline-flex; align-items: center; border: 1px solid #ccc; border-radius: 4px; background: #fff; padding: 0 0.5rem; }
+  .limit .money:focus-within { border-color: #1db954; box-shadow: 0 0 0 1px #1db954; }
+  .limit input { width: 5rem; padding: 0.4rem 0 0.4rem 0.2rem; border: 0; outline: none; font: inherit; background: transparent; }
 </style>
 </head>
 <body>
@@ -29,7 +35,7 @@
   <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
   <section id="reading"><h2>Reading Spotify</h2></section>
   <section id="board"><h2>Board</h2></section>
-  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><div id="enhance-spend" hidden><p id="enhance-spend-line"></p><div class="bar"><div id="enhance-spend-fill"></div></div></div><form id="enhance-limit-form" hidden><p><label>Daily limit (USD) <input type="number" id="enhance-limit" min="0.01" step="0.01" required></label> <button type="submit" id="enhance-limit-save">Save</button></p></form><p id="enhance-note" class="muted"></p></section>
+  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><div id="enhance-spend" hidden><p id="enhance-spend-line"></p><div class="bar"><div id="enhance-spend-fill"></div></div></div><form id="enhance-limit-form" class="limit" hidden><label for="enhance-limit">Daily limit</label><span class="money"><span class="muted">$</span><input type="number" id="enhance-limit" min="0.01" step="0.01" required></span><button type="submit" id="enhance-limit-save" class="action">Save</button></form><p id="enhance-note" class="muted"></p></section>
   <section id="authorization" hidden><h2>Spotify authorization</h2></section>
 </div>
 <script>
@@ -182,7 +188,7 @@ function renderEnhancement(data, changesAtFetch, limitChangesAtFetch) {
   document.getElementById("enhance-limit-form").hidden = !enhancement.available;
   const limit = document.getElementById("enhance-limit");
   if (!limitSaving && limitChangesAtFetch === limitChanges && document.activeElement !== limit) {
-    limit.value = String(spend.limit_usd);
+    limit.value = spend.limit_usd.toFixed(2);
   }
   const showSpend = enhancement.available && spend.spent_usd !== null;
   document.getElementById("enhance-spend").hidden = !showSpend;
