@@ -202,7 +202,18 @@ def use_openrouter_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def idle_enhancement(available: bool, enabled: bool) -> dict[str, object]:
     """`/status`'s enhancement with no pause and no cover, as it is without Spotify."""
-    return {"available": available, "enabled": enabled, "paused_until": None, "cover": None}
+    return {
+        "available": available,
+        "enabled": enabled,
+        "paused_until": None,
+        "cover": None,
+        "spend": no_spend(),
+    }
+
+
+def no_spend(limit: float = 1.0) -> dict[str, object]:
+    """`/status`'s spend without an enhancer: the limit only, nothing spent or reached."""
+    return {"spent_usd": None, "limit_usd": limit, "limit_reached": False, "resets_at": None}
 
 
 def state_of(authorize_response: httpx2.Response) -> str:
@@ -909,7 +920,13 @@ def test_the_openrouter_key_is_in_no_answer(
     assert put.status_code == 200
     assert AN_OPENROUTER_KEY not in put.text
     assert AN_OPENROUTER_KEY not in status.text
-    assert set(status.json()["enhancement"]) == {"available", "enabled", "paused_until", "cover"}
+    assert set(status.json()["enhancement"]) == {
+        "available",
+        "enabled",
+        "paused_until",
+        "cover",
+        "spend",
+    }
 
 
 def test_with_spotify_and_a_key_flipping_the_switch_makes_the_enhancer_forget(
@@ -971,6 +988,69 @@ def test_the_lifespan_gives_the_enhancer_the_ledger_file_and_the_live_limit(
 
     assert spent == pytest.approx(0.6)
     assert (before, after) == (False, True)
+
+
+def test_without_a_key_status_reports_the_limit_and_no_spend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The limit is the owner's setting and exists without a key; the spend does not.
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+
+    with TestClient(main.app) as client:
+        assert client.put("/settings", json={"daily_limit_usd": 0.25}).status_code == 200
+        spend = client.get("/status").json()["enhancement"]["spend"]
+
+    assert spend == no_spend(0.25)
+
+
+@pytest.mark.parametrize(
+    ("spent", "reached"),
+    [(0.4, False), (0.5, True), (0.6, True)],
+    ids=["under", "at", "over"],
+)
+def test_with_a_key_status_reports_todays_spend_against_the_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, spent: float, reached: bool
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    use_openrouter_key(monkeypatch)
+    now = datetime.now(UTC)
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "settings.json").write_text(
+        json.dumps({"ai_enhanced": True, "daily_limit_usd": 0.5}), encoding="utf-8"
+    )
+    (tmp_path / "var" / "ai-spend.json").write_text(
+        json.dumps({"day": now.date().isoformat(), "spent_usd": spent}), encoding="utf-8"
+    )
+
+    with TestClient(main.app) as client:
+        response = client.get("/status")
+
+    spend = response.json()["enhancement"]["spend"]
+    assert spend["spent_usd"] == pytest.approx(spent)
+    assert spend["limit_usd"] == 0.5
+    assert spend["limit_reached"] is reached
+    # The next 00:00 UTC, when the ledger's day ends.
+    next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), UTC)
+    assert datetime.fromisoformat(spend["resets_at"]) == next_midnight
+    assert AN_OPENROUTER_KEY not in response.text
+
+
+def test_the_status_page_saves_the_limit_through_put_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        page = client.get("/").text
+
+    assert 'id="enhance-limit" min="0.01" step="0.01"' in page
+    # The checkbox's call and the limit's, each a PUT to /settings.
+    assert page.count('fetch("/settings"') == 2
+    assert page.count('method: "PUT"') == 2
+    assert "JSON.stringify({ daily_limit_usd: Number(limit.value) })" in page
+    assert "The limit could not be saved." in page
 
 
 @pytest.mark.parametrize("spotify", [False, True], ids=["key only", "spotify only"])
@@ -1126,12 +1206,16 @@ def test_status_reports_what_enhancement_made_of_the_current_cover(
         enhancer=enhancer_after(answer, tmp_path),
     )
 
-    assert response.json()["enhancement"] == {
+    enhancement = response.json()["enhancement"]
+    resets_at = enhancement["spend"].pop("resets_at")
+    assert enhancement == {
         "available": True,
         "enabled": True,
         "paused_until": None,
         "cover": expected,
+        "spend": {"spent_usd": 0.0, "limit_usd": 1.0, "limit_reached": False},
     }
+    assert datetime.fromisoformat(resets_at) == datetime.fromisoformat("2026-11-12T00:00:00+00:00")
 
 
 @pytest.mark.parametrize(

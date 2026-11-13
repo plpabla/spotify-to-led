@@ -461,6 +461,18 @@ def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> di
             if enabled
             else None
         ),
+        "spend": _spend_json(enhancer, saved),
+    }
+
+
+def _spend_json(enhancer: Enhancer | None, saved: OwnerSettings) -> dict[str, Any]:
+    # The limit is the owner's setting, which exists with or without a key;
+    # the spend is the enhancer's, so without one there is none to report.
+    return {
+        "spent_usd": enhancer.spent_today if enhancer is not None else None,
+        "limit_usd": saved.daily_limit_usd,
+        "limit_reached": enhancer.limit_reached if enhancer is not None else False,
+        "resets_at": enhancer.spend_resets_at if enhancer is not None else None,
     }
 
 
@@ -488,8 +500,10 @@ def _enhanced_cover(
     - `"gave_up"` for a plain cover whose source image the enhancer gave up
       on; switching off and on asks again.
     - `"plain"` for any other plain cover: generation is paused (which
-      `paused_until` explains), the source image could not be downloaded, or
-      a switch just turned on has not reached the display's next sample.
+      `paused_until` explains), today's spend has reached the daily limit
+      (which `spend.limit_reached` explains), the source image could not be
+      downloaded, or a switch just turned on has not reached the display's
+      next sample.
 
     Only asked when enhancement is enabled, so plain here always means "not
     enhanced although it was asked to be".

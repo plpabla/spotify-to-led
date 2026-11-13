@@ -349,21 +349,21 @@ The existing `var/settings.json` (`{"ai_enhanced": true}`) loads with the $1.00 
 
 #### Automated
 
-- [x] 2.1 Full suite passes: `uv run pytest`
-- [x] 2.2 Bar geometry and colours at 0 %, 50 %, 74 %, 75 %, 89 %, 90 %, 100 % and over 100 %, at 16, 32 and 64 px, with the rest of the frame untouched: `uv run pytest tests/test_frames.py`
-- [x] 2.3 Only a generating cover's presentation carries `spend_fraction`; a change of fraction while generating redraws; the stale marker is still drawn over a barred frame: `uv run pytest tests/test_display.py`
+- [x] 2.1 Full suite passes: `uv run pytest` — 6659076
+- [x] 2.2 Bar geometry and colours at 0 %, 50 %, 74 %, 75 %, 89 %, 90 %, 100 % and over 100 %, at 16, 32 and 64 px, with the rest of the frame untouched: `uv run pytest tests/test_frames.py` — 6659076
+- [x] 2.3 Only a generating cover's presentation carries `spend_fraction`; a change of fraction while generating redraws; the stale marker is still drawn over a barred frame: `uv run pytest tests/test_display.py` — 6659076
 
 #### Manual
 
-- [ ] 2.4 On the real board, a never-seen cover shows the bottom bar with the green dot while generating, and the enhanced frame replaces it with no bar
-- [ ] 2.5 With the limit lowered on the page so today's spend is about 80 % / 95 % of it, the next generating frame shows an amber / red bar readable from the desk
+- [x] 2.4 On the real board, a never-seen cover shows the bottom bar with the green dot while generating, and the enhanced frame replaces it with no bar — 6659076
+- [x] 2.5 With the limit lowered on the page so today's spend is about 80 % / 95 % of it, the next generating frame shows an amber / red bar readable from the desk — 6659076
 
 ### Phase 3: Status page
 
 #### Automated
 
-- [ ] 3.1 Full suite passes: `uv run pytest`
-- [ ] 3.2 `/status` reports `spend` with and without a key, `limit_reached` true once the ledger is at the limit, and the page contains the limit form's `PUT /settings` call: `uv run pytest tests/test_app.py`
+- [x] 3.1 Full suite passes: `uv run pytest`
+- [x] 3.2 `/status` reports `spend` with and without a key, `limit_reached` true once the ledger is at the limit, and the page contains the limit form's `PUT /settings` call: `uv run pytest tests/test_app.py`
 
 #### Manual
 

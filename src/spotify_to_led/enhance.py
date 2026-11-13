@@ -325,6 +325,11 @@ class Enhancer:
         """Whether today's spend is at or over the owner's daily limit, so nothing starts."""
         return self._ledger.spent_today() >= self._daily_limit()
 
+    @property
+    def spend_resets_at(self) -> datetime:
+        """When today's spend goes back to $0, and a reached limit lets generation start again."""
+        return self._ledger.resets_at()
+
     def gave_up(self, url: str) -> bool:
         """Whether the image at `url` failed for good since the last `forget()`."""
         return url in self._gave_up
