@@ -9,7 +9,8 @@ server down with it.
 
 The display task (`display.run_display`) connects to the board, reconnecting
 with backoff whenever the link is down, and shows the cover of what is playing,
-the playing placeholder while that cover is not on hand, the no-artwork disc
+with a small green dot while its AI-enhanced frame is generated, the
+playing placeholder while that cover is not on hand, the no-artwork disc
 for an item with no artwork at all, or the idle frame, from the reader's
 snapshot. Covers are downloaded by a `CoverLoader` beside
 it, on the Spotify client, and kept on disk under `COVER_CACHE_DIR`, so a
@@ -431,7 +432,7 @@ def _enhanced_cover(
       Calling a pending cover "plain" would make a new item read plain, then
       generating, then enhanced, as if it had fallen back first.
     - `"generating"` while the enhanced frame is made; the board shows the
-      placeholder.
+      plain cover with the generating marker.
     - `"enhanced"` when the board's cover is the enhanced frame.
     - `"gave_up"` for a plain cover whose source image the enhancer gave up
       on; switching off and on asks again.
@@ -502,6 +503,7 @@ def _board_json(
                 "url": presentation.url,
                 "stale": presentation.stale,
                 "enhanced": presentation.enhanced,
+                "generating": presentation.generating,
             }
             if presentation is not None
             else None

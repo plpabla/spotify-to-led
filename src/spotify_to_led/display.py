@@ -25,11 +25,13 @@ a reader or a download. The rule:
   placeholder. Only before anything was chosen at all does a pending cover
   show the placeholder.
 - With AI enhancement switched on (FR-019), a cover whose enhanced frame is
-  being generated shows the playing placeholder: generation takes seconds,
-  far longer than a changeover should keep the previous item's cover up
-  unmarked. A ready cover's presentation says whether it is the enhanced
-  frame, so switching enhancement either way redraws the current item, and
-  a generation that fails or is paused shows the plain cover.
+  being generated shows its plain frame with the generating marker, a small
+  dot in the top-left corner: generation takes seconds, far longer than a
+  changeover should keep the previous item's cover up. It then redraws as
+  the enhanced frame, or as the plain one without the dot when the
+  generation fails or is paused. A cover's presentation says whether it is
+  the enhanced frame and whether it is generating, so switching enhancement
+  either way redraws the current item.
 - Whatever a reader's snapshot chose, cover, idle, placeholder or symbol,
   newly chosen or kept through a changeover, is stale once reads have been
   failing, or no read has succeeded, for more than `STALE_AFTER_SECONDS`,
@@ -66,7 +68,7 @@ The log lines are the evidence that the board recovers unattended, so they
 have to stay readable in `pm2 logs`: INFO when the link is lost, one WARNING
 per failed connect, with a traceback only on the first of each outage, INFO
 on connect, and INFO on each presentation change, naming the cover's URL and
-whether it is enhanced or stale. Each attempt also gets the library's own INFO
+whether it is enhanced, generating or stale. Each attempt also gets the library's own INFO
 "connecting to" line, and a scan for an absent board takes about 30 s, so at
 the 60 s ceiling a board that is off all day costs about 2,000 lines, whether
 it was off from boot or switched off later.
@@ -125,20 +127,25 @@ class PresentationKind(StrEnum):
 class Presentation:
     """What the board should show: a kind, the cover's URL for a cover, and staleness.
 
-    `enhanced` says whether a cover is its AI-enhanced frame. Hashable and
-    compared by value, so the loop can tell a change of cover, of its frame
-    or of the marker alone, from the same presentation sampled again.
+    `enhanced` says whether a cover is its AI-enhanced frame, and `generating`
+    whether it is the plain frame shown while the enhanced one is made, drawn
+    with the generating marker. Hashable and compared by value, so the loop
+    can tell a change of cover, of its frame or of a marker alone, from the
+    same presentation sampled again.
     """
 
     kind: PresentationKind
     url: str | None = None
     stale: bool = False
     enhanced: bool = False
+    generating: bool = False
 
     def __str__(self) -> str:
         name = f"cover {self.url}" if self.kind is PresentationKind.COVER else str(self.kind)
         if self.enhanced:
             name = f"{name} (enhanced)"
+        if self.generating:
+            name = f"{name} (generating)"
         return f"{name} (stale)" if self.stale else name
 
 
@@ -214,8 +221,12 @@ def select_presentation(
         # The changeover: whatever was chosen last, idle included, stays until
         # the new cover is ready, rather than flashing the placeholder.
         chosen = previous if previous is not None else PLACEHOLDER
+    elif cover[1].status is CoverStatus.GENERATING:
+        # The plain frame is in hand: shown, with the dot, while the enhanced
+        # one is made.
+        chosen = Presentation(PresentationKind.COVER, cover[0], generating=True)
     else:
-        # A failed download, or an enhanced frame still being generated.
+        # A failed download.
         chosen = PLACEHOLDER
     # Whatever the kind, and recomputed for a kept presentation too: staleness
     # is about the reads now, not about when the presentation was chosen.
@@ -296,8 +307,8 @@ async def run_display(
                     cover = (url, covers.state(url))
             previous = select_presentation(snapshot, cover, previous, clock())
             if cover is not None and cover[1].frame is not None:
-                # Only a ready cover carries a frame, and a ready cover is
-                # always the one chosen.
+                # Only a ready or generating cover carries a frame, and such
+                # a cover is always the one chosen.
                 retained = (cover[0], cover[1].enhanced, cover[1].frame)
             wanted = (previous, transport.connections)
             if wanted != attempted:
@@ -339,7 +350,11 @@ async def run_display(
 def _frame_for(
     presentation: Presentation, size: int, retained: tuple[str, bool, Image.Image] | None
 ) -> Image.Image:
-    """Return the RGB `(size, size)` frame that draws `presentation`, marked if stale."""
+    """Return the RGB `(size, size)` frame that draws `presentation`, with its markers.
+
+    The generating dot goes on first and the staleness marker second, each on
+    a copy, so the retained frame is never drawn into.
+    """
     if presentation.kind is PresentationKind.IDLE:
         frame = frames.idle(size)
     elif presentation.kind is PresentationKind.PLACEHOLDER:
@@ -347,9 +362,11 @@ def _frame_for(
     elif presentation.kind is PresentationKind.NO_ARTWORK:
         frame = frames.no_artwork(size)
     elif retained is None or retained[:2] != (presentation.url, presentation.enhanced):
-        # Cannot happen while every ready cover is retained as it is chosen;
-        # raised rather than drawing some other cover under this one's name.
+        # Cannot happen while every cover with a frame is retained as it is
+        # chosen; raised rather than drawing some other cover under this one's name.
         raise RuntimeError(f"no frame retained for {presentation}")
+    elif presentation.generating:
+        frame = frames.with_generating_marker(retained[2])
     else:
         frame = retained[2]
     return frames.with_stale_marker(frame) if presentation.stale else frame

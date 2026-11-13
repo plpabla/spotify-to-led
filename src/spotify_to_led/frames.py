@@ -1,6 +1,6 @@
 """The frames the service draws in code, without artwork.
 
-Four frames, and one overlay, live here:
+Four frames, and two overlays, live here:
 
 - `idle` is what the board shows when nothing is playing (FR-011): a small,
   dim music note centered on black. It is on for many hours a day, so it stays
@@ -21,6 +21,13 @@ Four frames, and one overlay, live here:
   disc: a small amber block in the top-right corner, inside a black ring so
   it reads against any cover, dark or bright. At every supported size it
   clears the note, the triangle and the disc, so it never cuts into a glyph.
+- `with_generating_marker` is drawn over the plain cover while its
+  AI-enhanced version (FR-019) is being generated: a small green dot in the
+  top-left corner, set in by one pixel, with no ring: the cover shows right
+  up to it. Green, because green already means "on its way" on this board,
+  from the placeholder's triangle; and half the stale marker's size, in the
+  opposite corner, so the two never read alike, even when both are drawn at
+  once.
 
 The test pattern has four solid quadrants in colours that stay apart on a
 32x32 LED matrix, so a transposed, mirrored or BGR-ordered push looks wrong
@@ -68,6 +75,15 @@ NO_ARTWORK_COLOUR: tuple[int, int, int] = (160, 160, 160)
 STALE_MARKER_COLOUR: tuple[int, int, int] = (255, 176, 0)
 STALE_MARKER_CELLS = 2
 STALE_MARKER_RING_PIXELS = 1
+
+# The generating marker: a 1x1-cell green dot on the same grid, set in from
+# the corner by the stale marker's ring width so it sits where it would inside
+# a ring, but with no ring: on the real board the black ring looked worse than
+# the cover around the dot. Dimmer than the placeholder's green, so a small
+# corner dot hints rather than shouts over the cover.
+GENERATING_MARKER_COLOUR: tuple[int, int, int] = (0, 160, 0)
+GENERATING_MARKER_CELLS = 1
+GENERATING_MARKER_INSET_PIXELS = STALE_MARKER_RING_PIXELS
 
 # The note is designed on the 16x16 grid of the smallest board and scaled up
 # by whole pixels, so every supported size (16, 32, 64) shows the same shape
@@ -168,4 +184,18 @@ def with_stale_marker(frame: Image.Image) -> Image.Image:
     marked.paste(
         STALE_MARKER_COLOUR, (right - outer + ring, ring, right - ring, ring + block)
     )
+    return marked
+
+
+def with_generating_marker(frame: Image.Image) -> Image.Image:
+    """Return a copy of `frame` with the generating marker in its top-left corner.
+
+    Only the dot's own pixels change; the cover shows around it. `frame`
+    itself is left untouched.
+    """
+    scale = frame.width // _GRID
+    inset = GENERATING_MARKER_INSET_PIXELS
+    dot = GENERATING_MARKER_CELLS * scale
+    marked = frame.copy()
+    marked.paste(GENERATING_MARKER_COLOUR, (inset, inset, inset + dot, inset + dot))
     return marked

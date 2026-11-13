@@ -114,12 +114,16 @@ def a_loader(server: ImageServer, sleep: FakeSleep) -> CoverLoader:
 
 
 async def until(condition: Callable[[], bool]) -> None:
-    """Let the loader's task run until `condition` holds."""
-    for _ in range(200):
-        if condition():
-            return
-        await asyncio.sleep(0)
-    raise AssertionError("the condition never held")
+    """Let the loader's task run until `condition` holds.
+
+    Bounded by time, not by turns of the loop: a generation decodes and
+    renders in worker threads, which a fixed number of turns can outrun.
+    """
+    deadline = asyncio.get_running_loop().time() + 5.0
+    while not condition():
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("the condition never held")
+        await asyncio.sleep(0.001)
 
 
 def an_item(*widths: int | None) -> PlayingItem:
@@ -664,9 +668,11 @@ async def test_a_never_seen_cover_goes_pending_then_generating_then_ready_enhanc
 
     plain_gate.set()
     await until(lambda: len(openrouter.requests) == 1)
-    # The plain frame is in hand and kept; the board gets the placeholder.
+    # The plain frame is in hand and kept, and carried, so the board shows it
+    # with the generating marker.
     assert loader.state(A_PLAIN_URL).status is CoverStatus.GENERATING
-    assert loader.state(A_PLAIN_URL).frame is None
+    assert colours(loader.state(A_PLAIN_URL).frame) == colours(PLAIN_FRAME)
+    assert loader.state(A_PLAIN_URL).enhanced is False
     assert entries(tmp_path) == [A_PLAIN_ENTRY]
 
     generation_gate.set()
@@ -696,8 +702,11 @@ async def test_a_cover_known_plain_goes_straight_to_generating(tmp_path: Path) -
 
     loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
 
-    # Before any await: the display shows the placeholder on this very sample.
-    assert loader.state(A_PLAIN_URL).status is CoverStatus.GENERATING
+    # Before any await: the display shows the plain cover, with the generating
+    # marker, on this very sample.
+    state = loader.state(A_PLAIN_URL)
+    assert (state.status, state.enhanced) == (CoverStatus.GENERATING, False)
+    assert colours(state.frame) == colours(PLAIN_FRAME)
     await until(lambda: loader.state(A_PLAIN_URL).status is CoverStatus.READY)
     assert loader.state(A_PLAIN_URL).enhanced is True
     # Only the source: the plain frame came from the cache.
@@ -739,7 +748,8 @@ async def test_switching_off_while_generating_is_the_plain_cover_at_once(tmp_pat
 
     loader.want(A_PLAIN_URL)
 
-    # Before any await, and with no download: no placeholder in between.
+    # Before any await, and with no download: the plain cover, now without
+    # the generating marker.
     state = loader.state(A_PLAIN_URL)
     assert (state.status, state.enhanced) == (CoverStatus.READY, False)
     assert colours(state.frame) == colours(PLAIN_FRAME)

@@ -974,7 +974,7 @@ def status_with(
         # The plain frame is not on hand yet: enhancement has not begun.
         (CoverState(CoverStatus.PENDING), None, None),
         (CoverState(CoverStatus.FAILED), None, None),
-        (CoverState(CoverStatus.GENERATING), None, "generating"),
+        (CoverState(CoverStatus.GENERATING, A_FRAME), None, "generating"),
         (CoverState(CoverStatus.READY, A_FRAME, enhanced=True), None, "enhanced"),
         (CoverState(CoverStatus.READY, A_FRAME), None, "plain"),
         # A 400 is given up on at once, and the give-up is the source image's.
@@ -1078,9 +1078,13 @@ def test_the_pause_is_reported_with_the_switch_off_and_nothing_playing(
     assert enhancement["cover"] is None
 
 
-@pytest.mark.parametrize("enhanced", [True, False])
-def test_status_reports_whether_the_cover_last_sent_was_enhanced(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, enhanced: bool
+@pytest.mark.parametrize(
+    ("enhanced", "generating"),
+    [(True, False), (False, False), (False, True)],
+    ids=["enhanced", "plain", "generating"],
+)
+def test_status_reports_whether_the_cover_last_sent_was_enhanced_or_generating(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, enhanced: bool, generating: bool
 ) -> None:
     use_transport(monkeypatch, CountingTransport(), tmp_path)
 
@@ -1088,7 +1092,10 @@ def test_status_reports_whether_the_cover_last_sent_was_enhanced(
         # Its own status object: the running loop keeps writing to the real one.
         main.app.state.display_status = display.DisplayStatus(
             presentation=display.Presentation(
-                display.PresentationKind.COVER, SMALL_COVER, enhanced=enhanced
+                display.PresentationKind.COVER,
+                SMALL_COVER,
+                enhanced=enhanced,
+                generating=generating,
             )
         )
         presentation = client.get("/status").json()["board"]["presentation"]
@@ -1098,4 +1105,5 @@ def test_status_reports_whether_the_cover_last_sent_was_enhanced(
         "url": SMALL_COVER,
         "stale": False,
         "enhanced": enhanced,
+        "generating": generating,
     }
