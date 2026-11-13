@@ -60,8 +60,9 @@ class Settings(BaseSettings):
     # A `SecretStr`, so the key reads as asterisks in a repr, a log line or a
     # validation error, and only `get_secret_value` hands it out.
     openrouter_api_key: SecretStr | None = None
-    # About $0.009 an image, and the model the proof of concept was judged on.
-    openrouter_model: str = "black-forest-labs/flux-3-image-klein"
+    # The image models the owner can pick from, one id per line, the first the
+    # default. Hand-edited and tracked with the checkout, unlike the files below.
+    model_list_file: Path = Path("models.txt")
     # The owner's choices from the status page, rewritten whenever one changes,
     # so like the token file it is runtime state kept apart from the env file.
     owner_settings_file: Path = Path("var/settings.json")

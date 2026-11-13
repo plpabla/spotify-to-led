@@ -33,6 +33,9 @@ class OwnerSettings:
     ai_enhanced: bool = False
     # The spend in USD at which no new generation starts until 00:00 UTC.
     daily_limit_usd: float = DEFAULT_DAILY_LIMIT_USD
+    # The OpenRouter model id the owner picked, or `None` before any pick.
+    # Which model is in use also depends on the list (`models.model_in_use`).
+    model: str | None = None
 
 
 class OwnerSettingsStore:
@@ -79,4 +82,13 @@ def _from_json(raw: object) -> OwnerSettings:
         raise TypeError("daily_limit_usd is not a number")
     if not math.isfinite(limit) or limit <= 0:
         raise ValueError("daily_limit_usd is not a positive amount")
-    return OwnerSettings(ai_enhanced=raw["ai_enhanced"], daily_limit_usd=float(limit))
+    # Optional for the same reason as the limit; `null` is no pick, as saved.
+    model = raw.get("model")
+    if model is not None:
+        if not isinstance(model, str):
+            raise TypeError("model is not a string")
+        if not model.strip():
+            raise ValueError("model is blank")
+    return OwnerSettings(
+        ai_enhanced=raw["ai_enhanced"], daily_limit_usd=float(limit), model=model
+    )

@@ -90,7 +90,52 @@ def test_the_file_holds_the_documented_json_shape(tmp_path: Path) -> None:
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "ai_enhanced": True,
         "daily_limit_usd": 1.0,
+        "model": None,
     }
+
+
+def test_the_defaults_have_no_model_picked() -> None:
+    assert OwnerSettings().model is None
+
+
+def test_a_saved_model_loads_back_equal(tmp_path: Path) -> None:
+    store = OwnerSettingsStore(tmp_path / "settings.json")
+    saved = OwnerSettings(ai_enhanced=True, daily_limit_usd=0.5, model="a/model")
+
+    store.save(saved)
+
+    assert store.load() == saved
+
+
+@pytest.mark.parametrize("model", ["", '"model": null'])
+def test_a_file_without_a_model_keeps_its_other_choices(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, model: str
+) -> None:
+    # The file every Pi has from before the model could be picked.
+    path = tmp_path / "settings.json"
+    extra = f", {model}" if model else ""
+    path.write_text(
+        f'{{"ai_enhanced": true, "daily_limit_usd": 0.5{extra}}}', encoding="utf-8"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        settings = OwnerSettingsStore(path).load()
+
+    assert settings == OwnerSettings(ai_enhanced=True, daily_limit_usd=0.5, model=None)
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("model", ["1", "true", '["a/model"]', '""', '"   "'])
+def test_a_model_that_is_not_an_id_loads_as_the_defaults_and_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, model: str
+) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(f'{{"ai_enhanced": true, "model": {model}}}', encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        assert OwnerSettingsStore(path).load() == OwnerSettings()
+
+    assert caplog.records, "a broken settings file must be reported"
 
 
 def test_a_missing_file_loads_as_the_defaults(tmp_path: Path) -> None:

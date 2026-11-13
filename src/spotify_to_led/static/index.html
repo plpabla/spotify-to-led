@@ -25,6 +25,8 @@
   .limit .money { display: inline-flex; align-items: center; border: 1px solid #ccc; border-radius: 4px; background: #fff; padding: 0 0.5rem; }
   .limit .money:focus-within { border-color: #1db954; box-shadow: 0 0 0 1px #1db954; }
   .limit input { width: 5rem; padding: 0.4rem 0 0.4rem 0.2rem; border: 0; outline: none; font: inherit; background: transparent; }
+  .limit select { max-width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; font: inherit; outline: none; }
+  .limit select:focus { border-color: #1db954; box-shadow: 0 0 0 1px #1db954; }
 </style>
 </head>
 <body>
@@ -35,7 +37,7 @@
   <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
   <section id="reading"><h2>Reading Spotify</h2></section>
   <section id="board"><h2>Board</h2></section>
-  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><div id="enhance-spend" hidden><p id="enhance-spend-line"></p><div class="bar"><div id="enhance-spend-fill"></div></div></div><form id="enhance-limit-form" class="limit" hidden><label for="enhance-limit">Daily limit</label><span class="money"><span class="muted">$</span><input type="number" id="enhance-limit" min="0.001" step="0.001" required></span><button type="submit" id="enhance-limit-save" class="action">Save</button></form><p id="enhance-note" class="muted"></p></section>
+  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><div id="enhance-spend" hidden><p id="enhance-spend-line"></p><div class="bar"><div id="enhance-spend-fill"></div></div></div><form id="enhance-limit-form" class="limit" hidden><label for="enhance-limit">Daily limit</label><span class="money"><span class="muted">$</span><input type="number" id="enhance-limit" min="0.001" step="0.001" required></span><button type="submit" id="enhance-limit-save" class="action">Save</button></form><p id="enhance-model-row" class="limit" hidden><label for="enhance-model">Model</label><select id="enhance-model"></select></p><p id="enhance-regenerate-row" hidden><button type="button" id="enhance-regenerate" class="action" disabled>Regenerate cover</button></p><p id="enhance-note" class="muted"></p></section>
   <section id="authorization" hidden><h2>Spotify authorization</h2></section>
 </div>
 <script>
@@ -161,6 +163,15 @@ let enhanceError = null;
 // focus, so a poll never overwrites what is being typed.
 let limitChanges = 0;
 let limitSaving = false;
+// The model select likewise, its options rebuilt only when the list changes.
+let modelChanges = 0;
+let modelSaving = false;
+let modelList = null;
+// Whether a regeneration request is in flight, so a second click cannot start
+// another; and, like the other controls, a poll that began before the latest
+// request leaves the button alone, since it may still show the cover finished.
+let regenerating = false;
+let regenerateChanges = 0;
 
 // The board's own spend bar thresholds and colours (frames.SPEND_BAR_*).
 const SPEND_BAR_AMBER_FROM = 0.75;
@@ -176,7 +187,7 @@ function clock(iso) {
   return new Date(parse(iso)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function renderEnhancement(data, changesAtFetch, limitChangesAtFetch) {
+function renderEnhancement(data, changesAtFetch, limitChangesAtFetch, modelChangesAtFetch, regenerateChangesAtFetch) {
   const enhancement = data.enhancement;
   const spend = enhancement.spend;
   const toggle = document.getElementById("enhance-toggle");
@@ -190,6 +201,24 @@ function renderEnhancement(data, changesAtFetch, limitChangesAtFetch) {
   if (!limitSaving && limitChangesAtFetch === limitChanges && document.activeElement !== limit) {
     // The same precision as the spend line, so a limit under $0.10 is not shown rounded.
     limit.value = spend.limit_usd.toFixed(spend.limit_usd < 0.1 ? 3 : 2);
+  }
+  document.getElementById("enhance-model-row").hidden = !enhancement.available;
+  const model = document.getElementById("enhance-model");
+  if (!modelSaving && modelChangesAtFetch === modelChanges && document.activeElement !== model) {
+    const list = JSON.stringify(enhancement.models);
+    if (list !== modelList) {
+      model.replaceChildren(...enhancement.models.map((id) => new Option(id, id)));
+      modelList = list;
+    }
+    model.value = enhancement.model;
+  }
+  // Only a finished cover can be redrawn, and only while generation may run.
+  document.getElementById("enhance-regenerate-row").hidden = !enhancement.available;
+  if (!regenerating && regenerateChangesAtFetch === regenerateChanges) {
+    document.getElementById("enhance-regenerate").disabled = !enhancement.enabled
+      || !["enhanced", "plain", "gave_up"].includes(enhancement.cover)
+      || Boolean(enhancement.paused_until)
+      || spend.limit_reached;
   }
   const showSpend = enhancement.available && spend.spent_usd !== null;
   document.getElementById("enhance-spend").hidden = !showSpend;
@@ -272,6 +301,63 @@ document.getElementById("enhance-limit-form").addEventListener("submit", async (
   }
 });
 
+document.getElementById("enhance-model").addEventListener("change", async (event) => {
+  const model = event.target;
+  modelChanges += 1;
+  modelSaving = true;
+  enhanceError = null;
+  model.disabled = true;
+  try {
+    const response = await fetch("/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: model.value }),
+    });
+    if (!response.ok) throw new Error("status " + response.status);
+  } catch (error) {
+    // The next poll puts the select back to the saved model.
+    enhanceError = "The model could not be saved.";
+    const note = document.getElementById("enhance-note");
+    note.textContent = enhanceError;
+    note.className = "bad";
+  } finally {
+    // Out of the select, so the next poll shows what was saved.
+    model.blur();
+    modelChanges += 1;
+    modelSaving = false;
+    model.disabled = false;
+  }
+});
+
+document.getElementById("enhance-regenerate").addEventListener("click", async (event) => {
+  const button = event.target;
+  regenerateChanges += 1;
+  regenerating = true;
+  enhanceError = null;
+  button.disabled = true;
+  try {
+    const response = await fetch("/regenerate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    // The service says why it refused, in plain text.
+    if (!response.ok) enhanceError = (await response.text()) || "The cover could not be regenerated.";
+  } catch (error) {
+    enhanceError = "The cover could not be regenerated.";
+  } finally {
+    if (enhanceError) {
+      const note = document.getElementById("enhance-note");
+      note.textContent = enhanceError;
+      note.className = "bad";
+    }
+    // The next poll enables the button again once the cover is finished;
+    // one sent while the request was in flight may predate it.
+    regenerateChanges += 1;
+    regenerating = false;
+  }
+});
+
 document.getElementById("enhance-toggle").addEventListener("change", async (event) => {
   const toggle = event.target;
   enhanceChanges += 1;
@@ -333,6 +419,8 @@ async function refresh() {
   try {
     const changesAtFetch = enhanceChanges;
     const limitChangesAtFetch = limitChanges;
+    const modelChangesAtFetch = modelChanges;
+    const regenerateChangesAtFetch = regenerateChanges;
     const response = await fetch("/status", { cache: "no-store" });
     if (!response.ok) throw new Error("status " + response.status);
     const data = await response.json();
@@ -340,7 +428,7 @@ async function refresh() {
     renderPlayback(data);
     renderReading(data, now);
     renderBoard(data);
-    renderEnhancement(data, changesAtFetch, limitChangesAtFetch);
+    renderEnhancement(data, changesAtFetch, limitChangesAtFetch, modelChangesAtFetch, regenerateChangesAtFetch);
     renderAuthorization(data);
     document.getElementById("unreachable").hidden = true;
     document.getElementById("sections").hidden = false;

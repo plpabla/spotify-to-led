@@ -624,7 +624,7 @@ def an_enhancing_loader(
     enhancer = Enhancer(
         client,
         "sk-or-v1-test-key",
-        "a/model",
+        lambda: "a/model",
         SIZE,
         ledger=ledger or MemoryLedger(),
         daily_limit=lambda: daily_limit,
@@ -1025,4 +1025,187 @@ async def test_without_an_enhancer_a_source_to_enhance_from_is_ignored(tmp_path:
 
     assert loader.state(A_PLAIN_URL).enhanced is False
     assert server.urls == [A_PLAIN_URL]
+    await loader.aclose()
+
+
+# --- regeneration ---------------------------------------------------------
+
+OLD_ENHANCED_FRAME = Image.new("RGB", (SIZE, SIZE), (10, 120, 250))
+
+
+def an_enhanced_cache(tmp_path: Path) -> FrameCache:
+    """A cache holding both of A's entries, the enhanced one from an earlier generation."""
+    cache = FrameCache(tmp_path, SIZE)
+    cache.store(A_PLAIN_URL, PLAIN_FRAME)
+    cache.store(A_PLAIN_URL, OLD_ENHANCED_FRAME, enhanced=True)
+    return cache
+
+
+async def test_regenerating_an_enhanced_cache_hit_shows_the_plain_frame_then_the_new_one(
+    tmp_path: Path,
+) -> None:
+    generation_gate, generation = gated(a_generation())
+    images = ImageServer([a_cover()])
+    openrouter = ImageServer([generation])
+    loader, _ = an_enhancing_loader(images, openrouter, an_enhanced_cache(tmp_path))
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    assert loader.state(A_PLAIN_URL).enhanced is True
+
+    assert loader.regenerate(A_PLAIN_URL, A_SOURCE_URL) is True
+
+    # Before any await: the plain frame, from the cache, while the new one is made.
+    state = loader.state(A_PLAIN_URL)
+    assert (state.status, state.enhanced) == (CoverStatus.GENERATING, False)
+    assert colours(state.frame) == colours(PLAIN_FRAME)
+    await until(lambda: len(openrouter.requests) == 1)
+    # The display wants the same pair on every sample; that changes nothing.
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    assert loader.state(A_PLAIN_URL).status is CoverStatus.GENERATING
+
+    generation_gate.set()
+    await until(lambda: loader.state(A_PLAIN_URL).status is CoverStatus.READY)
+
+    state = loader.state(A_PLAIN_URL)
+    assert state.enhanced is True
+    assert colours(state.frame) == colours(ENHANCED_FRAME)
+    # Only the source: the plain frame came from the cache.
+    assert images.urls == [A_SOURCE_URL]
+    stored = FrameCache(tmp_path, SIZE).load(A_PLAIN_URL, enhanced=True)
+    assert colours(stored) == colours(ENHANCED_FRAME)
+    await loader.aclose()
+
+
+async def test_a_failed_regeneration_shows_the_previous_enhanced_frame_and_keeps_its_entry(
+    tmp_path: Path,
+) -> None:
+    images = ImageServer([a_cover()])
+    openrouter = ImageServer([httpx2.Response(400, json={"error": {"message": "bad image"}})])
+    loader, _ = an_enhancing_loader(images, openrouter, an_enhanced_cache(tmp_path))
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    entry = tmp_path / str(SIZE) / AN_ENHANCED_ENTRY
+    before = entry.read_bytes()
+
+    assert loader.regenerate(A_PLAIN_URL, A_SOURCE_URL) is True
+    await until(lambda: loader.state(A_PLAIN_URL).status is CoverStatus.READY)
+
+    state = loader.state(A_PLAIN_URL)
+    assert state.enhanced is True
+    assert colours(state.frame) == colours(OLD_ENHANCED_FRAME)
+    assert len(openrouter.requests) == 1
+    assert entry.read_bytes() == before
+    await loader.aclose()
+
+
+async def test_regenerating_a_given_up_cover_tries_it_again(tmp_path: Path) -> None:
+    images = ImageServer([a_cover(), a_cover(), a_cover()])
+    openrouter = ImageServer(
+        [httpx2.Response(400, json={"error": {"message": "bad image"}}), a_generation()]
+    )
+    loader, enhancer = an_enhancing_loader(images, openrouter, FrameCache(tmp_path, SIZE))
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    await until(lambda: loader.state(A_PLAIN_URL).status is CoverStatus.READY)
+    assert enhancer.gave_up(A_SOURCE_URL)
+    assert loader.state(A_PLAIN_URL).enhanced is False
+
+    assert loader.regenerate(A_PLAIN_URL, A_SOURCE_URL) is True
+    # The plain frame was in memory: straight to generating.
+    assert loader.state(A_PLAIN_URL).status is CoverStatus.GENERATING
+    await until(lambda: loader.state(A_PLAIN_URL).enhanced)
+
+    assert len(openrouter.requests) == 2
+    assert not enhancer.gave_up(A_SOURCE_URL)
+    assert AN_ENHANCED_ENTRY in entries(tmp_path)
+    await loader.aclose()
+
+
+async def test_regenerating_without_a_plain_frame_on_hand_downloads_it_first(
+    tmp_path: Path,
+) -> None:
+    cache = FrameCache(tmp_path, SIZE)
+    cache.store(A_PLAIN_URL, OLD_ENHANCED_FRAME, enhanced=True)
+    plain_gate, plain = gated(a_cover())
+    images = ImageServer([plain, a_cover()])
+    openrouter = ImageServer([a_generation()])
+    loader, _ = an_enhancing_loader(images, openrouter, cache)
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+
+    assert loader.regenerate(A_PLAIN_URL, A_SOURCE_URL) is True
+    assert loader.state(A_PLAIN_URL).status is CoverStatus.PENDING
+
+    plain_gate.set()
+    await until(lambda: loader.state(A_PLAIN_URL).status is CoverStatus.READY)
+    assert loader.state(A_PLAIN_URL).enhanced is True
+    assert colours(loader.state(A_PLAIN_URL).frame) == colours(ENHANCED_FRAME)
+    assert images.urls == [A_PLAIN_URL, A_SOURCE_URL]
+    await loader.aclose()
+
+
+async def test_regenerating_a_pair_not_wanted_starts_nothing(tmp_path: Path) -> None:
+    images, openrouter = ImageServer([]), ImageServer([])
+    loader, _ = an_enhancing_loader(images, openrouter, an_enhanced_cache(tmp_path))
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    wanted = loader.state(A_PLAIN_URL)
+
+    assert loader.regenerate(B_PLAIN_URL, B_SOURCE_URL) is False
+    assert loader.regenerate(A_PLAIN_URL, B_SOURCE_URL) is False
+
+    assert loader.state(A_PLAIN_URL) is wanted
+    await asyncio.sleep(0)
+    assert images.requests == []
+    assert openrouter.requests == []
+    await loader.aclose()
+
+
+async def test_regenerating_a_cover_wanted_plain_starts_nothing(tmp_path: Path) -> None:
+    images, openrouter = ImageServer([]), ImageServer([])
+    loader, _ = an_enhancing_loader(images, openrouter, an_enhanced_cache(tmp_path))
+    loader.want(A_PLAIN_URL)
+
+    assert loader.regenerate(A_PLAIN_URL, A_SOURCE_URL) is False
+    await asyncio.sleep(0)
+    assert openrouter.requests == []
+    await loader.aclose()
+
+
+async def test_regenerating_while_pending_or_generating_starts_nothing(tmp_path: Path) -> None:
+    plain_gate, plain = gated(a_cover())
+    images = ImageServer([plain, a_cover()])
+    openrouter = ImageServer([])
+    openrouter.answers = [openrouter.hang]
+    loader, _ = an_enhancing_loader(images, openrouter, FrameCache(tmp_path, SIZE))
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    await until(lambda: len(images.requests) == 1)
+
+    assert loader.state(A_PLAIN_URL).status is CoverStatus.PENDING
+    assert loader.regenerate(A_PLAIN_URL, A_SOURCE_URL) is False
+
+    plain_gate.set()
+    await until(lambda: len(openrouter.requests) == 1)
+    assert loader.state(A_PLAIN_URL).status is CoverStatus.GENERATING
+    assert loader.regenerate(A_PLAIN_URL, A_SOURCE_URL) is False
+
+    await asyncio.sleep(0)
+    # Neither restarted the work: one plain download, one source, one request.
+    assert len(images.requests) == 2
+    assert len(openrouter.requests) == 1
+    await loader.aclose()
+
+
+async def test_wanting_another_cover_mid_regeneration_stores_nothing(tmp_path: Path) -> None:
+    images = ImageServer([a_cover(), a_cover()])
+    openrouter = ImageServer([])
+    openrouter.answers = [openrouter.hang]
+    loader, _ = an_enhancing_loader(images, openrouter, an_enhanced_cache(tmp_path))
+    loader.want(A_PLAIN_URL, enhance_from=A_SOURCE_URL)
+    entry = tmp_path / str(SIZE) / AN_ENHANCED_ENTRY
+    before = entry.read_bytes()
+    assert loader.regenerate(A_PLAIN_URL, A_SOURCE_URL) is True
+    await until(lambda: len(openrouter.requests) == 1)
+
+    loader.want(B_PLAIN_URL)
+    await until(lambda: loader.state(B_PLAIN_URL).status is CoverStatus.READY)
+
+    assert openrouter.cancelled == [OPENROUTER_URL]
+    assert loader.state(A_PLAIN_URL).status is CoverStatus.PENDING
+    assert entry.read_bytes() == before
     await loader.aclose()

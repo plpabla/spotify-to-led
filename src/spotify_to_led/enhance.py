@@ -39,9 +39,13 @@ loader calls. It hands back a finished board frame, shrunk with
   90 s; on the Pi a generation took about 9 s, 20 s at worst.
 - `EnhanceFailed`, or running out of attempts, means the enhancer gives up on
   that image. It remembers so in memory, and asks for it again only after
-  `forget()`, which the owner's switch calls whenever it changes, or after a
-  restart. Without that memory every sighting of a cover the model cannot
-  draw would cost three more calls.
+  `forget()`, which the owner's switch calls whenever it changes, after
+  `forget_image()` for that one image, or after a restart. Without that
+  memory every sighting of a cover the model cannot draw would cost three
+  more calls.
+- The model is the one in use when an image's first attempt starts, read
+  from a callable so the owner's pick applies to the next cover; all of that
+  image's attempts use it.
 - `EnhanceRefused` pauses every generation, for every image, until the next
   00:00 UTC, which is when a daily key limit resets. A key that is simply
   wrong is refused the same way, and asked again once a day.
@@ -51,9 +55,10 @@ loader calls. It hands back a finished board frame, shrunk with
   It is checked once, before the first attempt, so the call that crosses the
   limit is allowed and its retries are not cut short.
 
-Each image's outcome is logged once, naming the image's URL: INFO with the
+Each image's outcome is logged once, naming the image's URL and the model: INFO with the
 cost on success, a WARNING when the enhancer gives up or pauses, or when a
-success reports no cost, which the daily limit then cannot count. A retry is an
+success reports no cost, which is then counted toward the daily limit at
+`UNREPORTED_COST_ESTIMATE_USD`. A retry is an
 INFO line of its own, and so is an image not started because the limit is
 reached. The key is in none of them.
 """
@@ -116,6 +121,9 @@ ENHANCE_ATTEMPTS = 3
 # The wait after each failed attempt but the last: the start of the cover
 # retry's doubling, cut short, since every attempt here is paid for.
 ENHANCE_RETRY_DELAYS: tuple[float, ...] = (5.0, 10.0)
+# What a success counts toward today's spend when OpenRouter reports no cost
+# for it: the default model's price per image, so the daily limit still moves.
+UNREPORTED_COST_ESTIMATE_USD = 0.009
 
 Clock = Callable[[], datetime]
 Sleep = Callable[[float], Awaitable[None]]
@@ -296,7 +304,7 @@ class Enhancer:
         self,
         client: httpx2.AsyncClient,
         api_key: str,
-        model: str,
+        model: Callable[[], str],
         size: int,
         *,
         ledger: SpendLedger,
@@ -306,6 +314,8 @@ class Enhancer:
     ) -> None:
         self._client = client
         self._api_key = api_key
+        # A callable like the limit, read as each image starts, so a model
+        # picked on the page is used for the next cover.
         self._model = model
         self._size = size
         self._ledger = ledger
@@ -350,6 +360,10 @@ class Enhancer:
         """
         self._gave_up.clear()
 
+    def forget_image(self, url: str) -> None:
+        """Forget giving up on the image at `url` alone, so it is tried again when next wanted."""
+        self._gave_up.discard(url)
+
     async def enhance(self, url: str, source: bytes, mime: str) -> Image.Image | None:
         """Return `source`, the image at `url` of type `mime`, as an enhanced board frame.
 
@@ -368,12 +382,15 @@ class Enhancer:
                 self._daily_limit(),
             )
             return None
+        # Read once, so every attempt for this image asks the same model, and
+        # its outcome is logged with the model that produced it.
+        model = self._model()
         for attempt in range(1, ENHANCE_ATTEMPTS + 1):
             try:
                 generated = await generate(
                     self._client,
                     self._api_key,
-                    self._model,
+                    model,
                     source,
                     mime,
                     timeout=ENHANCE_TIMEOUT_SECONDS,
@@ -381,8 +398,9 @@ class Enhancer:
             except EnhanceRefused as error:
                 self._paused_until = next_utc_midnight(self._clock())
                 logger.warning(
-                    "enhancing %s was refused (%s); pausing all generation until %s",
+                    "enhancing %s with %s was refused (%s); pausing all generation until %s",
                     url,
+                    model,
                     error,
                     self._paused_until.isoformat(),
                 )
@@ -390,15 +408,20 @@ class Enhancer:
             except EnhanceFailed as error:
                 self._gave_up.add(url)
                 logger.warning(
-                    "enhancing %s failed (%s); showing the plain cover", url, error
+                    "enhancing %s with %s failed (%s); showing the plain cover",
+                    url,
+                    model,
+                    error,
                 )
                 return None
             except EnhanceRetryable as error:
                 if attempt == ENHANCE_ATTEMPTS:
                     self._gave_up.add(url)
                     logger.warning(
-                        "enhancing %s failed %s times, the last with %s; showing the plain cover",
+                        "enhancing %s with %s failed %s times, the last with %s;"
+                        " showing the plain cover",
                         url,
+                        model,
                         attempt,
                         error,
                     )
@@ -414,21 +437,30 @@ class Enhancer:
                 # the loader show the plain cover instead of dying mid-way.
                 self._gave_up.add(url)
                 logger.exception(
-                    "enhancing %s failed unexpectedly; showing the plain cover", url
+                    "enhancing %s with %s failed unexpectedly; showing the plain cover",
+                    url,
+                    model,
                 )
                 return None
             else:
                 if generated.cost is not None:
-                    logger.info("cover enhanced: %s (cost $%.4f)", url, generated.cost)
+                    logger.info(
+                        "cover enhanced: %s with %s (cost $%.4f)", url, model, generated.cost
+                    )
                     self._ledger.record(generated.cost)
                 else:
-                    # Nothing to add to today's spend, so the daily limit
-                    # cannot see this call; loud enough to be noticed if it
-                    # starts happening for every cover.
+                    # Counted at an estimate, or a model that never reports
+                    # its cost could be regenerated without the daily limit
+                    # ever seeing it; loud enough to be noticed if it starts
+                    # happening for every cover.
                     logger.warning(
-                        "cover enhanced: %s (cost not reported; not counted toward today's limit)",
+                        "cover enhanced: %s with %s"
+                        " (cost not reported; counted as an estimated $%.4f)",
                         url,
+                        model,
+                        UNREPORTED_COST_ESTIMATE_USD,
                     )
+                    self._ledger.record(UNREPORTED_COST_ESTIMATE_USD)
                 # Off the event loop for the same reason as the decode.
                 return await asyncio.to_thread(render_enhanced, generated.image, self._size)
         # The loop returns on its last attempt whatever the outcome.

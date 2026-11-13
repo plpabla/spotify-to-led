@@ -21,7 +21,9 @@ whenever that choice changes or the link comes back.
 With an OpenRouter key and Spotify both configured, the loader also gets an
 `Enhancer` on the same client, and the display reads the owner's switch on
 every sample: switched on, covers are redrawn by an image model (FR-019),
-each image once, kept beside its plain frame in the cache. Switched off, or
+each image once, kept beside its plain frame in the cache. The model is the
+owner's pick from the ids in `MODEL_LIST_FILE`, or the list's first id
+without one, read as each generation starts. Switched off, or
 without a key, no OpenRouter request is made. What each generation cost is
 added up per UTC day in `AI_SPEND_FILE`, and once today's total reaches the
 owner's daily limit no generation starts until 00:00 UTC.
@@ -32,11 +34,17 @@ where the display task has ended, so a board fault is explained, not hidden.
 It also reports what enhancement is doing: whether the current cover is
 enhanced, plain, being generated or plain after a give-up, and until when
 generation is paused after a refusal, and today's spend against the daily
-limit. Its two controls, the AI-enhanced covers checkbox and the daily limit,
-write through `PUT /settings`, which keeps the owner's choices in
-`OWNER_SETTINGS_FILE` so they survive a restart. A flip of the switch also
-makes the enhancer forget the images it gave up on, so switching off and on is
-how the owner asks for another try.
+limit, and the models in `MODEL_LIST_FILE` with the one in use. The owner's
+choices, the AI-enhanced covers switch, the daily limit and the model, are
+written through `PUT /settings`, which keeps them in `OWNER_SETTINGS_FILE` so
+they survive a restart, and takes only a model the list names. A flip of the
+switch, or a change of the model in use, also makes the enhancer forget the
+images it gave up on, so switching off and on is how the owner asks for
+another try. `POST /regenerate` asks for the cover now on show to be
+generated again with the model in use, replacing its kept enhanced frame;
+like `PUT /settings` it takes only a JSON body, and it starts nothing while
+enhancement is off, paused or over today's limit, or no finished cover is on
+show.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
@@ -64,6 +72,7 @@ from pydantic import (
     ConfigDict,
     StrictBool,
     StrictFloat,
+    StrictStr,
     field_validator,
     model_validator,
 )
@@ -82,6 +91,7 @@ from spotify_to_led.display import (
 )
 from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
+from spotify_to_led.models import load_models, model_in_use
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
 from spotify_to_led.spend import SpendLedger
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
@@ -156,6 +166,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.owner_settings_store = owner_settings_store
     app.state.owner_settings = owner_settings_store.load()
     app.state.enhance_available = settings.enhance_available
+    app.state.model_list_file = settings.model_list_file
 
     spotify_client: httpx2.AsyncClient | None = None
     reader: SpotifyReader | None = None
@@ -173,7 +184,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             enhancer = Enhancer(
                 spotify_client,
                 settings.openrouter_api_key.get_secret_value(),
-                settings.openrouter_model,
+                # The list and the owner's pick are both read as each cover
+                # starts, so an edit to either applies without a restart.
+                lambda: model_in_use(
+                    load_models(app.state.model_list_file), app.state.owner_settings.model
+                ),
                 settings.board_size,
                 ledger=SpendLedger(settings.ai_spend_file),
                 # Read at every check, so a limit saved from the page applies
@@ -382,6 +397,8 @@ class SettingsChange(BaseModel):
 
     ai_enhanced: StrictBool | None = None
     daily_limit_usd: StrictFloat | None = None
+    # Checked against the model list by the route, which reads it as it is now.
+    model: StrictStr | None = None
 
     @field_validator("daily_limit_usd")
     @classmethod
@@ -394,15 +411,15 @@ class SettingsChange(BaseModel):
     @model_validator(mode="after")
     def _changes_something(self) -> Self:
         """Refuse a body that names no choice, which would save nothing new."""
-        if self.ai_enhanced is None and self.daily_limit_usd is None:
-            raise ValueError("name at least one of ai_enhanced and daily_limit_usd")
+        if self.ai_enhanced is None and self.daily_limit_usd is None and self.model is None:
+            raise ValueError("name at least one of ai_enhanced, daily_limit_usd and model")
         return self
 
 
 @app.put("/settings", response_model=None)
 async def put_settings(
     request: Request, change: SettingsChange
-) -> dict[str, bool | float] | Response:
+) -> dict[str, bool | float | str | None] | Response:
     """Save the owner's choices and answer with what was saved.
 
     Ungated like every route: the only gate is Cloudflare Access at the edge.
@@ -418,6 +435,10 @@ async def put_settings(
             "and none is configured.",
             status_code=409,
         )
+    # Read now, so a model just added to the file can be picked without a restart.
+    models = load_models(request.app.state.model_list_file)
+    if change.model is not None and change.model not in models:
+        return PlainTextResponse("That model is not in the model list.", status_code=409)
     previous: OwnerSettings = request.app.state.owner_settings
     updated = OwnerSettings(
         ai_enhanced=(
@@ -428,6 +449,7 @@ async def put_settings(
             if change.daily_limit_usd is not None
             else previous.daily_limit_usd
         ),
+        model=change.model if change.model is not None else previous.model,
     )
     try:
         request.app.state.owner_settings_store.save(updated)
@@ -438,11 +460,60 @@ async def put_settings(
         return PlainTextResponse("The setting could not be saved.", status_code=500)
     request.app.state.owner_settings = updated
     enhancer: Enhancer | None = request.app.state.enhancer
-    if enhancer is not None and updated.ai_enhanced != previous.ai_enhanced:
-        # A flip is the owner's way to ask again for the covers given up on.
-        # A new limit is not: it is about money, not about those images.
+    if enhancer is not None and (
+        updated.ai_enhanced != previous.ai_enhanced
+        or model_in_use(models, updated.model) != model_in_use(models, previous.model)
+    ):
+        # A flip is the owner's way to ask again for the covers given up on,
+        # and another model may well manage what this one could not. A new
+        # limit is not: it is about money, not about those images.
         enhancer.forget()
-    return {"ai_enhanced": updated.ai_enhanced, "daily_limit_usd": updated.daily_limit_usd}
+    return {
+        "ai_enhanced": updated.ai_enhanced,
+        "daily_limit_usd": updated.daily_limit_usd,
+        "model": updated.model,
+    }
+
+
+class RegenerateRequest(BaseModel):
+    """The body of `POST /regenerate`: an empty JSON object.
+
+    It carries nothing; requiring it is what makes the route JSON-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@app.post("/regenerate", status_code=202, response_model=None)
+async def regenerate(request: Request, body: RegenerateRequest) -> dict[str, bool] | Response:
+    """Generate the cover now on show again, with the model in use.
+
+    This spends money, so like `PUT /settings` it takes only an
+    `application/json` body, which a cross-site form or `text/plain` post
+    cannot send without a CORS preflight; anything else is a 422 before this
+    runs. Every refusal is a 409 with nothing started.
+    """
+    enhancer: Enhancer | None = request.app.state.enhancer
+    covers: CoverLoader | None = request.app.state.covers
+    saved: OwnerSettings = request.app.state.owner_settings
+    if (
+        enhancer is None
+        or covers is None
+        or not saved.ai_enhanced
+        or not request.app.state.enhance_available
+    ):
+        return PlainTextResponse("AI-enhanced covers are not switched on.", status_code=409)
+    if enhancer.paused_until is not None:
+        return PlainTextResponse("Generation is paused.", status_code=409)
+    if enhancer.limit_reached:
+        return PlainTextResponse("Today's AI spend limit is reached.", status_code=409)
+    reader = _reader(request)
+    snapshot = reader.snapshot if reader is not None else None
+    url = wanted_cover_url(snapshot, request.app.state.board_size)
+    source = enhancement_source_url(snapshot)
+    if url is None or source is None or not covers.regenerate(url, source):
+        return PlainTextResponse("No finished cover to regenerate right now.", status_code=409)
+    return {"regenerating": True}
 
 
 def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> dict[str, Any]:
@@ -452,6 +523,8 @@ def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> di
     # is gone: without one the service never enhances.
     enabled = saved.ai_enhanced and available
     enhancer: Enhancer | None = request.app.state.enhancer
+    # Read on every poll, so an edit to the file shows without a restart.
+    models = load_models(request.app.state.model_list_file)
     return {
         "available": available,
         "enabled": enabled,
@@ -466,6 +539,9 @@ def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> di
             else None
         ),
         "spend": _spend_json(enhancer, saved),
+        # Reported with or without a key, like the limit: they are the owner's choices.
+        "models": list(models),
+        "model": model_in_use(models, saved.model),
     }
 
 
