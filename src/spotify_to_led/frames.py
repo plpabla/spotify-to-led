@@ -1,6 +1,6 @@
 """The frames the service draws in code, without artwork.
 
-Four frames, and two overlays, live here:
+Four frames, and three overlays, live here:
 
 - `idle` is what the board shows when nothing is playing (FR-011): a small,
   dim music note centered on black. It is on for many hours a day, so it stays
@@ -28,6 +28,14 @@ Four frames, and two overlays, live here:
   from the placeholder's triangle; and half the stale marker's size, in the
   opposite corner, so the two never read alike, even when both are drawn at
   once.
+- `with_spend_bar` goes under that dot, on the plain cover only while it is
+  being enhanced: today's AI spend against the owner's daily limit, as a bar
+  along the bottom pixel row. The whole row is black and its left part filled
+  in proportion to the spend, so an empty bar still reads as a bar. The fill
+  is the generating marker's green, then the stale marker's amber from 75 %
+  and red from 90 %, so a limit about to stop the enhancement shows before it
+  does. It is one board pixel high at every size, and never meets the corner
+  markers at the top.
 
 The test pattern has four solid quadrants in colours that stay apart on a
 32x32 LED matrix, so a transposed, mirrored or BGR-ordered push looks wrong
@@ -44,6 +52,8 @@ written reference image is what the hardware smoke test is judged against.
 
 None of these renders artwork; that is FR-007, in `rendering`.
 """
+
+import math
 
 from PIL import Image, ImageDraw
 
@@ -84,6 +94,14 @@ STALE_MARKER_RING_PIXELS = 1
 GENERATING_MARKER_COLOUR: tuple[int, int, int] = (0, 160, 0)
 GENERATING_MARKER_CELLS = 1
 GENERATING_MARKER_INSET_PIXELS = STALE_MARKER_RING_PIXELS
+
+# The spend bar: one board pixel high, not scaled by the design grid, so it
+# takes as little of the cover as the board allows. Filled green below the
+# first threshold, amber below the second, red from there; the fractions are
+# of the owner's daily limit.
+SPEND_BAR_AMBER_FROM = 0.75
+SPEND_BAR_RED_FROM = 0.90
+SPEND_BAR_RED: tuple[int, int, int] = (255, 0, 0)
 
 # The note is designed on the 16x16 grid of the smallest board and scaled up
 # by whole pixels, so every supported size (16, 32, 64) shows the same shape
@@ -199,3 +217,26 @@ def with_generating_marker(frame: Image.Image) -> Image.Image:
     marked = frame.copy()
     marked.paste(GENERATING_MARKER_COLOUR, (inset, inset, inset + dot, inset + dot))
     return marked
+
+
+def with_spend_bar(frame: Image.Image, fraction: float) -> Image.Image:
+    """Return a copy of `frame` with the spend bar along its bottom pixel row.
+
+    The row is black, and its leftmost `fraction` of pixels, clamped to 0..1
+    and rounded up so any spend at all shows, is filled in the colour for that
+    fraction. `frame` itself is left untouched.
+    """
+    width = frame.width
+    bottom = frame.height - 1
+    filled = math.ceil(min(max(fraction, 0.0), 1.0) * width)
+    if fraction < SPEND_BAR_AMBER_FROM:
+        colour = GENERATING_MARKER_COLOUR
+    elif fraction < SPEND_BAR_RED_FROM:
+        colour = STALE_MARKER_COLOUR
+    else:
+        colour = SPEND_BAR_RED
+    barred = frame.copy()
+    barred.paste((0, 0, 0), (0, bottom, width, bottom + 1))
+    if filled:
+        barred.paste(colour, (0, bottom, filled, bottom + 1))
+    return barred

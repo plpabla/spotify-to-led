@@ -334,24 +334,24 @@ The existing `var/settings.json` (`{"ai_enhanced": true}`) loads with the $1.00 
 
 #### Automated
 
-- [x] 1.1 Full suite passes: `uv run pytest`
-- [x] 1.2 Ledger tests pass: `uv run pytest tests/test_spend.py`
-- [x] 1.3 A settings file without `daily_limit_usd` loads with its `ai_enhanced` kept and the $1.00 default: `uv run pytest tests/test_owner_settings.py`
-- [x] 1.4 At or over the limit the enhancer makes no request and the loader shows plain at once; one call crossing the limit is allowed: `uv run pytest tests/test_enhance.py tests/test_covers.py`
-- [x] 1.5 `PUT /settings` accepts `{"daily_limit_usd": 0.5}` alone, refuses `0`, negative, `"1"`, `true`, unknown fields and `{}`, and keeps `ai_enhanced` unchanged when only the limit is sent: `uv run pytest tests/test_app.py`
+- [x] 1.1 Full suite passes: `uv run pytest` — 1b4163d
+- [x] 1.2 Ledger tests pass: `uv run pytest tests/test_spend.py` — 1b4163d
+- [x] 1.3 A settings file without `daily_limit_usd` loads with its `ai_enhanced` kept and the $1.00 default: `uv run pytest tests/test_owner_settings.py` — 1b4163d
+- [x] 1.4 At or over the limit the enhancer makes no request and the loader shows plain at once; one call crossing the limit is allowed: `uv run pytest tests/test_enhance.py tests/test_covers.py` — 1b4163d
+- [x] 1.5 `PUT /settings` accepts `{"daily_limit_usd": 0.5}` alone, refuses `0`, negative, `"1"`, `true`, unknown fields and `{}`, and keeps `ai_enhanced` unchanged when only the limit is sent: `uv run pytest tests/test_app.py` — 1b4163d
 
 #### Manual
 
-- [ ] 1.6 On the Pi, after a new cover generates, `var/ai-spend.json` holds today's UTC date and a total matching the "cover enhanced ... (cost $...)" log lines
-- [ ] 1.7 After `pm2 restart`, the total in the file is unchanged and the existing `settings.json` still has enhancement on
+- [x] 1.6 On the Pi, after a new cover generates, `var/ai-spend.json` holds today's UTC date and a total matching the "cover enhanced ... (cost $...)" log lines — 1b4163d
+- [x] 1.7 After `pm2 restart`, the total in the file is unchanged and the existing `settings.json` still has enhancement on — 1b4163d
 
 ### Phase 2: Cost bar on the board
 
 #### Automated
 
-- [ ] 2.1 Full suite passes: `uv run pytest`
-- [ ] 2.2 Bar geometry and colours at 0 %, 50 %, 74 %, 75 %, 89 %, 90 %, 100 % and over 100 %, at 16, 32 and 64 px, with the rest of the frame untouched: `uv run pytest tests/test_frames.py`
-- [ ] 2.3 Only a generating cover's presentation carries `spend_fraction`; a change of fraction while generating redraws; the stale marker is still drawn over a barred frame: `uv run pytest tests/test_display.py`
+- [x] 2.1 Full suite passes: `uv run pytest`
+- [x] 2.2 Bar geometry and colours at 0 %, 50 %, 74 %, 75 %, 89 %, 90 %, 100 % and over 100 %, at 16, 32 and 64 px, with the rest of the frame untouched: `uv run pytest tests/test_frames.py`
+- [x] 2.3 Only a generating cover's presentation carries `spend_fraction`; a change of fraction while generating redraws; the stale marker is still drawn over a barred frame: `uv run pytest tests/test_display.py`
 
 #### Manual
 

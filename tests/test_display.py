@@ -1028,6 +1028,141 @@ async def test_a_stale_generating_cover_carries_both_markers() -> None:
     ]
 
 
+# --- the spend bar --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("state", "previous"),
+    [
+        (READY_A, None),
+        (READY_A_ENHANCED, None),
+        (FAILED, None),
+        (PENDING, IDLE),
+        (PENDING, cover(B_URL)),
+    ],
+)
+def test_only_a_generating_cover_carries_the_spend_fraction(
+    state: CoverState, previous: Presentation | None
+) -> None:
+    chosen = select_presentation(playing(A_URL), (A_URL, state), previous, NOW, 0.5)
+
+    assert chosen.spend_fraction is None
+
+
+@pytest.mark.parametrize(
+    "snapshot", [None, NOTHING, playing(None), playing(A_URL, failing_for=31)]
+)
+def test_idle_the_symbol_and_the_placeholder_never_carry_the_spend_fraction(
+    snapshot: PlaybackSnapshot | None,
+) -> None:
+    # The last one has artwork but no loader: the placeholder.
+    chosen = select_presentation(snapshot, None, None, NOW, 0.5)
+
+    assert chosen.spend_fraction is None
+
+
+@pytest.mark.parametrize(("failing_for", "stale"), [(None, False), (31, True)])
+def test_a_generating_cover_carries_the_spend_fraction(
+    failing_for: float | None, stale: bool
+) -> None:
+    snapshot = playing(A_URL, failing_for=failing_for)
+
+    chosen = select_presentation(snapshot, (A_URL, GENERATING_A), None, NOW, 0.5)
+
+    assert chosen == replace(generating(A_URL, stale), spend_fraction=0.5)
+    # A different fraction is a different presentation, so the loop redraws.
+    assert chosen != replace(chosen, spend_fraction=0.6)
+
+
+def test_the_spend_fraction_shows_in_the_log() -> None:
+    presentation = replace(generating(A_URL), spend_fraction=0.8)
+
+    assert str(presentation) == f"cover {A_URL} (generating) (spend 80%)"
+    assert str(marked(presentation)) == f"cover {A_URL} (generating) (spend 80%) (stale)"
+
+
+class Spend:
+    """Today's spend over the limit, which a test changes between samples."""
+
+    def __init__(self, fraction: float) -> None:
+        self.fraction = fraction
+
+    def __call__(self) -> float:
+        return self.fraction
+
+
+async def run_with_spend(
+    board: FakeBoard,
+    current: Callable[[], PlaybackSnapshot | None],
+    sleep: FakeSleep,
+    covers: FakeCovers,
+    spend: Spend,
+) -> None:
+    with pytest.raises(asyncio.CancelledError):
+        await run_display(
+            board,
+            SIZE,
+            current,
+            covers=covers,
+            spend_fraction=spend,
+            clock=lambda: NOW,
+            sleep=sleep,
+        )
+
+
+def barred(frame: Image.Image, fraction: float) -> bytes:
+    """The bytes of `frame` with the bar and the generating dot, as the loop draws it."""
+    return frames.with_generating_marker(frames.with_spend_bar(frame, fraction)).tobytes()
+
+
+async def test_a_generating_cover_is_drawn_with_the_bar_and_a_change_of_spend_redraws() -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: GENERATING_A})
+    spend = Spend(0.5)
+    sleep = ActingSleep(
+        sleeps=4,
+        actions={
+            1: lambda: setattr(spend, "fraction", 0.8),
+            3: lambda: covers.states.update({A_URL: READY_A_ENHANCED}),
+        },
+    )
+
+    await run_with_spend(board, lambda: playing(A_URL), sleep, covers, spend)
+
+    # The same fraction sampled again is not pushed again; the enhanced frame
+    # has no bar.
+    assert [frame.tobytes() for frame in board.pushed] == [
+        barred(COVER_A, 0.5),
+        barred(COVER_A, 0.8),
+        ENHANCED_A.tobytes(),
+    ]
+
+
+async def test_the_stale_marker_is_drawn_over_a_barred_generating_cover() -> None:
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: GENERATING_A})
+    current = scripted(playing(A_URL), playing(A_URL, failing_for=31))
+
+    await run_with_spend(board, current, FakeSleep(sleeps=2), covers, Spend(0.95))
+
+    assert [frame.tobytes() for frame in board.pushed] == [
+        barred(COVER_A, 0.95),
+        frames.with_stale_marker(
+            frames.with_generating_marker(frames.with_spend_bar(COVER_A, 0.95))
+        ).tobytes(),
+    ]
+
+
+async def test_a_plain_cover_has_no_bar_whatever_the_spend() -> None:
+    # As after a failed or paused generation, or once the limit is reached.
+    board = FakeBoard()
+    covers = FakeCovers({A_URL: READY_A})
+
+    await run_with_spend(board, lambda: playing(A_URL), FakeSleep(sleeps=2), covers, Spend(1.2))
+
+    assert board.drawn == ["cover a"]
+
+
 # The loop driven with a real loader, cache and enhancer over a scripted
 # network, so a flip of the switch is followed through to the board.
 A_SMALL = "https://i.scdn.co/image/ab67616d00004851aaaa"

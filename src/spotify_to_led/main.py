@@ -211,6 +211,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             covers=covers,
             # Only with an enhancer: without one, the switch has nothing to switch.
             owner_settings=owner_settings if enhancer is not None else None,
+            # Today's spend against the limit, read live like the switch; the
+            # limit is always above zero, by `OwnerSettings`' validation.
+            spend_fraction=(
+                (lambda: enhancer.spent_today / app.state.owner_settings.daily_limit_usd)
+                if enhancer is not None
+                else None
+            ),
             status=display_status,
         )
     )

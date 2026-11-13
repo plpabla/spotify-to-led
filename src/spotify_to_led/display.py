@@ -31,7 +31,11 @@ a reader or a download. The rule:
   the enhanced frame, or as the plain one without the dot when the
   generation fails or is paused. A cover's presentation says whether it is
   the enhanced frame and whether it is generating, so switching enhancement
-  either way redraws the current item.
+  either way redraws the current item. While generating, the plain frame also
+  carries the spend bar along its bottom row: today's AI spend as a fraction
+  of the owner's daily limit, as it stood before this generation. The
+  fraction is part of the presentation, so a change of it while generating
+  redraws; no other presentation, the enhanced frame included, has the bar.
 - Whatever a reader's snapshot chose, cover, idle, placeholder or symbol,
   newly chosen or kept through a changeover, is stale once reads have been
   failing, or no read has succeeded, for more than `STALE_AFTER_SECONDS`,
@@ -129,9 +133,10 @@ class Presentation:
 
     `enhanced` says whether a cover is its AI-enhanced frame, and `generating`
     whether it is the plain frame shown while the enhanced one is made, drawn
-    with the generating marker. Hashable and compared by value, so the loop
-    can tell a change of cover, of its frame or of a marker alone, from the
-    same presentation sampled again.
+    with the generating marker. `spend_fraction` is set only on a generating
+    cover, and draws the spend bar. Hashable and compared by value, so the
+    loop can tell a change of cover, of its frame or of a marker alone, from
+    the same presentation sampled again.
     """
 
     kind: PresentationKind
@@ -139,6 +144,7 @@ class Presentation:
     stale: bool = False
     enhanced: bool = False
     generating: bool = False
+    spend_fraction: float | None = None
 
     def __str__(self) -> str:
         name = f"cover {self.url}" if self.kind is PresentationKind.COVER else str(self.kind)
@@ -146,6 +152,8 @@ class Presentation:
             name = f"{name} (enhanced)"
         if self.generating:
             name = f"{name} (generating)"
+        if self.spend_fraction is not None:
+            name = f"{name} (spend {self.spend_fraction:.0%})"
         return f"{name} (stale)" if self.stale else name
 
 
@@ -197,12 +205,14 @@ def select_presentation(
     cover: tuple[str, CoverState] | None,
     previous: Presentation | None,
     now: datetime,
+    spend_fraction: float | None = None,
 ) -> Presentation:
     """Choose the presentation for `snapshot`; `None` means there is no reader.
 
     `cover` is the wanted cover's URL and its loader state, or `None` when
     there is no cover to want (or no loader to want it from). `previous` is
-    the presentation last chosen, `None` before the first.
+    the presentation last chosen, `None` before the first. `spend_fraction`,
+    today's AI spend over the daily limit, goes on a generating cover only.
     """
     if snapshot is None:
         # Spotify is not configured: a setup mode, not blindness, so plain idle.
@@ -224,7 +234,9 @@ def select_presentation(
     elif cover[1].status is CoverStatus.GENERATING:
         # The plain frame is in hand: shown, with the dot, while the enhanced
         # one is made.
-        chosen = Presentation(PresentationKind.COVER, cover[0], generating=True)
+        chosen = Presentation(
+            PresentationKind.COVER, cover[0], generating=True, spend_fraction=spend_fraction
+        )
     else:
         # A failed download.
         chosen = PLACEHOLDER
@@ -254,6 +266,7 @@ async def run_display(
     *,
     covers: CoverLoader | None = None,
     owner_settings: Callable[[], OwnerSettings] | None = None,
+    spend_fraction: Callable[[], float] | None = None,
     status: DisplayStatus | None = None,
     clock: Clock = _utc_now,
     sleep: Sleep = asyncio.sleep,
@@ -264,8 +277,11 @@ async def run_display(
     `covers` downloads the covers; without one, an item with artwork shows the
     placeholder. `owner_settings` returns the owner's current choices, and is
     given only when `covers` has an enhancer: with it, and enhancement
-    switched on, covers are wanted enhanced. `status`, when given, is kept up
-    to date with the presentation last attempted and whether its push failed.
+    switched on, covers are wanted enhanced. `spend_fraction` returns today's
+    AI spend over the daily limit, read on every sample for the spend bar of
+    a generating cover; it means something only with `covers`. `status`, when
+    given, is kept up to date with the presentation last attempted and
+    whether its push failed.
     Nothing but `CancelledError` leaves this coroutine: the task must not be
     able to prevent the application from serving.
     """
@@ -293,6 +309,7 @@ async def run_display(
                 await _connect(transport, sleep)
             snapshot = current()
             cover: tuple[str, CoverState] | None = None
+            fraction: float | None = None
             if covers is not None:
                 url = wanted_cover_url(snapshot, size)
                 enhance = owner_settings is not None and owner_settings().ai_enhanced
@@ -305,7 +322,9 @@ async def run_display(
                     covers.want(url, enhance_from=source)
                 if url is not None:
                     cover = (url, covers.state(url))
-            previous = select_presentation(snapshot, cover, previous, clock())
+                if spend_fraction is not None:
+                    fraction = spend_fraction()
+            previous = select_presentation(snapshot, cover, previous, clock(), fraction)
             if cover is not None and cover[1].frame is not None:
                 # Only a ready or generating cover carries a frame, and such
                 # a cover is always the one chosen.
@@ -352,8 +371,9 @@ def _frame_for(
 ) -> Image.Image:
     """Return the RGB `(size, size)` frame that draws `presentation`, with its markers.
 
-    The generating dot goes on first and the staleness marker second, each on
-    a copy, so the retained frame is never drawn into.
+    The spend bar goes on first, the generating dot second and the staleness
+    marker last, each on a copy, so the retained frame is never drawn into and
+    FR-018's marker is never covered.
     """
     if presentation.kind is PresentationKind.IDLE:
         frame = frames.idle(size)
@@ -366,7 +386,10 @@ def _frame_for(
         # chosen; raised rather than drawing some other cover under this one's name.
         raise RuntimeError(f"no frame retained for {presentation}")
     elif presentation.generating:
-        frame = frames.with_generating_marker(retained[2])
+        frame = retained[2]
+        if presentation.spend_fraction is not None:
+            frame = frames.with_spend_bar(frame, presentation.spend_fraction)
+        frame = frames.with_generating_marker(frame)
     else:
         frame = retained[2]
     return frames.with_stale_marker(frame) if presentation.stale else frame
