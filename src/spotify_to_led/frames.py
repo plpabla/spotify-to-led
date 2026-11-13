@@ -21,13 +21,16 @@ Four frames, and two overlays, live here:
   disc: a small amber block in the top-right corner, inside a black ring so
   it reads against any cover, dark or bright. At every supported size it
   clears the note, the triangle and the disc, so it never cuts into a glyph.
-- `with_generating_marker` is drawn over the plain cover while its
-  AI-enhanced version (FR-019) is being generated: a small green dot in the
-  top-left corner, set in by one pixel, with no ring: the cover shows right
-  up to it. Green, because green already means "on its way" on this board,
-  from the placeholder's triangle; and half the stale marker's size, in the
-  opposite corner, so the two never read alike, even when both are drawn at
-  once.
+- `with_spend_bar` is drawn over the plain cover while its AI-enhanced
+  version (FR-019) is being generated, and is the board's only sign that one
+  is: today's AI spend against the owner's daily limit, as a bar along the
+  bottom pixel row. The whole row is black and its left part filled in
+  proportion to the spend, so an empty bar still reads as a bar. The fill is
+  green, because green already means "on its way" on this board, from the
+  placeholder's triangle, then the stale marker's amber from 75 % and red
+  from 90 %, so a limit about to stop the enhancement shows before it does.
+  It is one board pixel high at every size, and never meets the stale marker
+  at the top.
 
 The test pattern has four solid quadrants in colours that stay apart on a
 32x32 LED matrix, so a transposed, mirrored or BGR-ordered push looks wrong
@@ -44,6 +47,8 @@ written reference image is what the hardware smoke test is judged against.
 
 None of these renders artwork; that is FR-007, in `rendering`.
 """
+
+import math
 
 from PIL import Image, ImageDraw
 
@@ -76,14 +81,15 @@ STALE_MARKER_COLOUR: tuple[int, int, int] = (255, 176, 0)
 STALE_MARKER_CELLS = 2
 STALE_MARKER_RING_PIXELS = 1
 
-# The generating marker: a 1x1-cell green dot on the same grid, set in from
-# the corner by the stale marker's ring width so it sits where it would inside
-# a ring, but with no ring: on the real board the black ring looked worse than
-# the cover around the dot. Dimmer than the placeholder's green, so a small
-# corner dot hints rather than shouts over the cover.
-GENERATING_MARKER_COLOUR: tuple[int, int, int] = (0, 160, 0)
-GENERATING_MARKER_CELLS = 1
-GENERATING_MARKER_INSET_PIXELS = STALE_MARKER_RING_PIXELS
+# The spend bar: one board pixel high, not scaled by the design grid, so it
+# takes as little of the cover as the board allows. Filled green below the
+# first threshold, amber below the second, red from there; the fractions are
+# of the owner's daily limit. The green is dimmer than the placeholder's, so
+# the bar hints rather than shouts over the cover.
+SPEND_BAR_GREEN: tuple[int, int, int] = (0, 160, 0)
+SPEND_BAR_AMBER_FROM = 0.75
+SPEND_BAR_RED_FROM = 0.90
+SPEND_BAR_RED: tuple[int, int, int] = (255, 0, 0)
 
 # The note is designed on the 16x16 grid of the smallest board and scaled up
 # by whole pixels, so every supported size (16, 32, 64) shows the same shape
@@ -187,15 +193,24 @@ def with_stale_marker(frame: Image.Image) -> Image.Image:
     return marked
 
 
-def with_generating_marker(frame: Image.Image) -> Image.Image:
-    """Return a copy of `frame` with the generating marker in its top-left corner.
+def with_spend_bar(frame: Image.Image, fraction: float) -> Image.Image:
+    """Return a copy of `frame` with the spend bar along its bottom pixel row.
 
-    Only the dot's own pixels change; the cover shows around it. `frame`
-    itself is left untouched.
+    The row is black, and its leftmost `fraction` of pixels, clamped to 0..1
+    and rounded up so any spend at all shows, is filled in the colour for that
+    fraction. `frame` itself is left untouched.
     """
-    scale = frame.width // _GRID
-    inset = GENERATING_MARKER_INSET_PIXELS
-    dot = GENERATING_MARKER_CELLS * scale
-    marked = frame.copy()
-    marked.paste(GENERATING_MARKER_COLOUR, (inset, inset, inset + dot, inset + dot))
-    return marked
+    width = frame.width
+    bottom = frame.height - 1
+    filled = math.ceil(min(max(fraction, 0.0), 1.0) * width)
+    if fraction < SPEND_BAR_AMBER_FROM:
+        colour = SPEND_BAR_GREEN
+    elif fraction < SPEND_BAR_RED_FROM:
+        colour = STALE_MARKER_COLOUR
+    else:
+        colour = SPEND_BAR_RED
+    barred = frame.copy()
+    barred.paste((0, 0, 0), (0, bottom, width, bottom + 1))
+    if filled:
+        barred.paste(colour, (0, bottom, filled, bottom + 1))
+    return barred

@@ -45,26 +45,38 @@ loader calls. It hands back a finished board frame, shrunk with
 - `EnhanceRefused` pauses every generation, for every image, until the next
   00:00 UTC, which is when a daily key limit resets. A key that is simply
   wrong is refused the same way, and asked again once a day.
+- Once today's spend, the costs OpenRouter reported for the day's successful
+  calls as a `SpendLedger` counts them, reaches the owner's daily limit, no
+  generation starts until the next 00:00 UTC or until the limit is raised.
+  It is checked once, before the first attempt, so the call that crosses the
+  limit is allowed and its retries are not cut short.
 
 Each image's outcome is logged once, naming the image's URL: INFO with the
-cost on success, a WARNING when the enhancer gives up or pauses. A retry is an
-INFO line of its own. The key is in none of them.
+cost on success, a WARNING when the enhancer gives up or pauses, or when a
+success reports no cost, which the daily limit then cannot count. A retry is an
+INFO line of its own, and so is an image not started because the limit is
+reached. The key is in none of them.
 """
 
 import asyncio
 import base64
 import binascii
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from io import BytesIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx2
 from PIL import Image
 
 from spotify_to_led.rendering import render_enhanced
+
+if TYPE_CHECKING:
+    # Only for the annotation: `spend` imports this module's clock and midnight.
+    from spotify_to_led.spend import SpendLedger
 
 logger = logging.getLogger(__name__)
 
@@ -228,10 +240,17 @@ def _decode_image(payload: dict[str, Any]) -> Image.Image:
 
 
 def _cost(payload: dict[str, Any]) -> float | None:
-    """`usage.cost` from a successful answer, or `None` when it is missing."""
+    """`usage.cost` from a successful answer, or `None` when it is missing or not an amount.
+
+    The JSON decoder reads `NaN` and `Infinity`, and a `NaN` added to today's
+    spend would make the limit never reached and the spend bar undrawable; a
+    negative cost would lower the total. Neither is a cost to count.
+    """
     usage = payload.get("usage")
     cost = usage.get("cost") if isinstance(usage, dict) else None
     if isinstance(cost, bool) or not isinstance(cost, int | float):
+        return None
+    if not math.isfinite(cost) or cost < 0:
         return None
     return float(cost)
 
@@ -280,6 +299,8 @@ class Enhancer:
         model: str,
         size: int,
         *,
+        ledger: SpendLedger,
+        daily_limit: Callable[[], float],
         clock: Clock = _utc_now,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
@@ -287,6 +308,10 @@ class Enhancer:
         self._api_key = api_key
         self._model = model
         self._size = size
+        self._ledger = ledger
+        # A callable, read at every check, so a limit changed from the page
+        # applies to the next cover.
+        self._daily_limit = daily_limit
         self._clock = clock
         self._sleep = sleep
         self._paused_until: datetime | None = None
@@ -298,6 +323,21 @@ class Enhancer:
         if self._paused_until is not None and self._clock() < self._paused_until:
             return self._paused_until
         return None
+
+    @property
+    def spent_today(self) -> float:
+        """What today's (UTC) generations have cost so far, in USD."""
+        return self._ledger.spent_today()
+
+    @property
+    def limit_reached(self) -> bool:
+        """Whether today's spend is at or over the owner's daily limit, so nothing starts."""
+        return self._ledger.spent_today() >= self._daily_limit()
+
+    @property
+    def spend_resets_at(self) -> datetime:
+        """When today's spend goes back to $0, and a reached limit lets generation start again."""
+        return self._ledger.resets_at()
 
     def gave_up(self, url: str) -> bool:
         """Whether the image at `url` failed for good since the last `forget()`."""
@@ -314,10 +354,19 @@ class Enhancer:
         """Return `source`, the image at `url` of type `mime`, as an enhanced board frame.
 
         `None` means the plain cover is to be shown instead: generation is
-        paused, the image was given up on before, or it is given up on now.
-        Makes no request in the first two cases.
+        paused, the image was given up on before, today's limit is reached,
+        or the image is given up on now. Makes no request in the first three
+        cases.
         """
         if self.paused_until is not None or self.gave_up(url):
+            return None
+        if self.limit_reached:
+            logger.info(
+                "not enhancing %s: today's AI spend $%.4f has reached the daily limit of $%.2f",
+                url,
+                self.spent_today,
+                self._daily_limit(),
+            )
             return None
         for attempt in range(1, ENHANCE_ATTEMPTS + 1):
             try:
@@ -369,8 +418,17 @@ class Enhancer:
                 )
                 return None
             else:
-                cost = f"${generated.cost:.4f}" if generated.cost is not None else "not reported"
-                logger.info("cover enhanced: %s (cost %s)", url, cost)
+                if generated.cost is not None:
+                    logger.info("cover enhanced: %s (cost $%.4f)", url, generated.cost)
+                    self._ledger.record(generated.cost)
+                else:
+                    # Nothing to add to today's spend, so the daily limit
+                    # cannot see this call; loud enough to be noticed if it
+                    # starts happening for every cover.
+                    logger.warning(
+                        "cover enhanced: %s (cost not reported; not counted toward today's limit)",
+                        url,
+                    )
                 # Off the event loop for the same reason as the decode.
                 return await asyncio.to_thread(render_enhanced, generated.image, self._size)
         # The loop returns on its last attempt whatever the outcome.

@@ -9,8 +9,8 @@ server down with it.
 
 The display task (`display.run_display`) connects to the board, reconnecting
 with backoff whenever the link is down, and shows the cover of what is playing,
-with a small green dot while its AI-enhanced frame is generated, the
-playing placeholder while that cover is not on hand, the no-artwork disc
+with the spend bar along its bottom row while its AI-enhanced frame is
+generated, the playing placeholder while that cover is not on hand, the no-artwork disc
 for an item with no artwork at all, or the idle frame, from the reader's
 snapshot. Covers are downloaded by a `CoverLoader` beside
 it, on the Spotify client, and kept on disk under `COVER_CACHE_DIR`, so a
@@ -22,17 +22,21 @@ With an OpenRouter key and Spotify both configured, the loader also gets an
 `Enhancer` on the same client, and the display reads the owner's switch on
 every sample: switched on, covers are redrawn by an image model (FR-019),
 each image once, kept beside its plain frame in the cache. Switched off, or
-without a key, no OpenRouter request is made.
+without a key, no OpenRouter request is made. What each generation cost is
+added up per UTC day in `AI_SPEND_FILE`, and once today's total reaches the
+owner's daily limit no generation starts until 00:00 UTC.
 
 The status page at `/` is static and renders `/status`, which reports the
 believed playback, the authorization and the board link, including the case
 where the display task has ended, so a board fault is explained, not hidden.
 It also reports what enhancement is doing: whether the current cover is
 enhanced, plain, being generated or plain after a give-up, and until when
-generation is paused after a refusal. Its one control, the AI-enhanced covers checkbox, writes through
-`PUT /settings`, which keeps the owner's choice in `OWNER_SETTINGS_FILE` so it
-survives a restart. A change of it also makes the enhancer forget the images
-it gave up on, so switching off and on is how the owner asks for another try.
+generation is paused after a refusal, and today's spend against the daily
+limit. Its two controls, the AI-enhanced covers checkbox and the daily limit,
+write through `PUT /settings`, which keeps the owner's choices in
+`OWNER_SETTINGS_FILE` so they survive a restart. A flip of the switch also
+makes the enhancer forget the images it gave up on, so switching off and on is
+how the owner asks for another try.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
@@ -41,6 +45,7 @@ test suite start the same app the Pi does.
 
 import asyncio
 import logging
+import math
 import re
 import sys
 from collections.abc import AsyncIterator
@@ -48,13 +53,20 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import httpx2
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    StrictFloat,
+    field_validator,
+    model_validator,
+)
 
 from spotify_to_led.board.factory import create_transport
 from spotify_to_led.board.transport import BoardTransport, LinkState
@@ -71,6 +83,7 @@ from spotify_to_led.display import (
 from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
+from spotify_to_led.spend import SpendLedger
 from spotify_to_led.spotify.auth import AuthorizationRevoked, SpotifyAuthError
 from spotify_to_led.spotify.playback import PlaybackSnapshot
 from spotify_to_led.spotify.reader import AuthorizationStateMismatch, SpotifyReader
@@ -162,6 +175,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 settings.openrouter_api_key.get_secret_value(),
                 settings.openrouter_model,
                 settings.board_size,
+                ledger=SpendLedger(settings.ai_spend_file),
+                # Read at every check, so a limit saved from the page applies
+                # to the next cover.
+                daily_limit=lambda: app.state.owner_settings.daily_limit_usd,
             )
         covers = CoverLoader(
             spotify_client,
@@ -198,6 +215,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             covers=covers,
             # Only with an enhancer: without one, the switch has nothing to switch.
             owner_settings=owner_settings if enhancer is not None else None,
+            # Today's spend against the limit, read live like the switch; the
+            # limit is always above zero, by `OwnerSettings`' validation.
+            spend_fraction=(
+                (lambda: enhancer.spent_today / app.state.owner_settings.daily_limit_usd)
+                if enhancer is not None
+                else None
+            ),
             status=display_status,
         )
     )
@@ -347,17 +371,38 @@ async def status(request: Request) -> dict[str, Any]:
 
 
 class SettingsChange(BaseModel):
-    """The body of `PUT /settings`: exactly one strict boolean, nothing else."""
+    """The body of `PUT /settings`: the choices to change, at least one, nothing else.
 
-    # A misspelt field is refused rather than silently dropped, and
-    # `StrictBool` refuses `"false"` or `0` rather than coercing them.
+    A choice left out keeps its saved value.
+    """
+
+    # A misspelt field is refused rather than silently dropped, and the
+    # strict types refuse `"false"`, `0` or `"1"` rather than coercing them.
     model_config = ConfigDict(extra="forbid")
 
-    ai_enhanced: StrictBool
+    ai_enhanced: StrictBool | None = None
+    daily_limit_usd: StrictFloat | None = None
+
+    @field_validator("daily_limit_usd")
+    @classmethod
+    def _limit_is_a_positive_amount(cls, value: float | None) -> float | None:
+        """Refuse a limit of zero, below it, or not finite: none is an amount to stop at."""
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            raise ValueError("daily_limit_usd must be a finite amount greater than 0")
+        return value
+
+    @model_validator(mode="after")
+    def _changes_something(self) -> Self:
+        """Refuse a body that names no choice, which would save nothing new."""
+        if self.ai_enhanced is None and self.daily_limit_usd is None:
+            raise ValueError("name at least one of ai_enhanced and daily_limit_usd")
+        return self
 
 
 @app.put("/settings", response_model=None)
-async def put_settings(request: Request, change: SettingsChange) -> dict[str, bool] | Response:
+async def put_settings(
+    request: Request, change: SettingsChange
+) -> dict[str, bool | float] | Response:
     """Save the owner's choices and answer with what was saved.
 
     Ungated like every route: the only gate is Cloudflare Access at the edge.
@@ -367,14 +412,23 @@ async def put_settings(request: Request, change: SettingsChange) -> dict[str, bo
     type already refuses any other body, or one with no content type, with a
     422 before this runs; `tests/test_app.py` holds it to that.
     """
-    if change.ai_enhanced and not request.app.state.enhance_available:
+    if change.ai_enhanced is True and not request.app.state.enhance_available:
         return PlainTextResponse(
             "AI-enhanced covers need an OpenRouter key (OPENROUTER_API_KEY), "
             "and none is configured.",
             status_code=409,
         )
     previous: OwnerSettings = request.app.state.owner_settings
-    updated = OwnerSettings(ai_enhanced=change.ai_enhanced)
+    updated = OwnerSettings(
+        ai_enhanced=(
+            change.ai_enhanced if change.ai_enhanced is not None else previous.ai_enhanced
+        ),
+        daily_limit_usd=(
+            change.daily_limit_usd
+            if change.daily_limit_usd is not None
+            else previous.daily_limit_usd
+        ),
+    )
     try:
         request.app.state.owner_settings_store.save(updated)
     except OSError as failure:
@@ -384,10 +438,11 @@ async def put_settings(request: Request, change: SettingsChange) -> dict[str, bo
         return PlainTextResponse("The setting could not be saved.", status_code=500)
     request.app.state.owner_settings = updated
     enhancer: Enhancer | None = request.app.state.enhancer
-    if enhancer is not None and updated != previous:
+    if enhancer is not None and updated.ai_enhanced != previous.ai_enhanced:
         # A flip is the owner's way to ask again for the covers given up on.
+        # A new limit is not: it is about money, not about those images.
         enhancer.forget()
-    return {"ai_enhanced": updated.ai_enhanced}
+    return {"ai_enhanced": updated.ai_enhanced, "daily_limit_usd": updated.daily_limit_usd}
 
 
 def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> dict[str, Any]:
@@ -410,6 +465,18 @@ def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> di
             if enabled
             else None
         ),
+        "spend": _spend_json(enhancer, saved),
+    }
+
+
+def _spend_json(enhancer: Enhancer | None, saved: OwnerSettings) -> dict[str, Any]:
+    # The limit is the owner's setting, which exists with or without a key;
+    # the spend is the enhancer's, so without one there is none to report.
+    return {
+        "spent_usd": enhancer.spent_today if enhancer is not None else None,
+        "limit_usd": saved.daily_limit_usd,
+        "limit_reached": enhancer.limit_reached if enhancer is not None else False,
+        "resets_at": enhancer.spend_resets_at if enhancer is not None else None,
     }
 
 
@@ -437,8 +504,10 @@ def _enhanced_cover(
     - `"gave_up"` for a plain cover whose source image the enhancer gave up
       on; switching off and on asks again.
     - `"plain"` for any other plain cover: generation is paused (which
-      `paused_until` explains), the source image could not be downloaded, or
-      a switch just turned on has not reached the display's next sample.
+      `paused_until` explains), today's spend has reached the daily limit
+      (which `spend.limit_reached` explains), the source image could not be
+      downloaded, or a switch just turned on has not reached the display's
+      next sample.
 
     Only asked when enhancement is enabled, so plain here always means "not
     enhanced although it was asked to be".

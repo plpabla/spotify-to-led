@@ -16,7 +16,15 @@
   .notice { background: #e6f4e6; border-color: #9c9; }
   .alert { background: #fdecea; border-color: #e0a0a0; }
   .promoted { border: 2px solid #a40000; }
-  a.action { display: inline-block; margin: 0.4rem 0; padding: 0.4rem 0.8rem; background: #1db954; color: #000; border-radius: 4px; text-decoration: none; font-weight: 600; }
+  .bar { height: 0.6rem; background: #000; border-radius: 3px; overflow: hidden; margin: 0.25rem 0; }
+  .bar > div { height: 100%; width: 0; }
+  .action { display: inline-block; margin: 0.4rem 0; padding: 0.4rem 0.8rem; background: #1db954; color: #000; border: 0; border-radius: 4px; text-decoration: none; font: inherit; font-weight: 600; cursor: pointer; }
+  .action:disabled { opacity: 0.5; cursor: default; }
+  .limit { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.25rem 0; }
+  .limit[hidden] { display: none; }
+  .limit .money { display: inline-flex; align-items: center; border: 1px solid #ccc; border-radius: 4px; background: #fff; padding: 0 0.5rem; }
+  .limit .money:focus-within { border-color: #1db954; box-shadow: 0 0 0 1px #1db954; }
+  .limit input { width: 5rem; padding: 0.4rem 0 0.4rem 0.2rem; border: 0; outline: none; font: inherit; background: transparent; }
 </style>
 </head>
 <body>
@@ -27,7 +35,7 @@
   <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
   <section id="reading"><h2>Reading Spotify</h2></section>
   <section id="board"><h2>Board</h2></section>
-  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><p id="enhance-note" class="muted"></p></section>
+  <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><div id="enhance-spend" hidden><p id="enhance-spend-line"></p><div class="bar"><div id="enhance-spend-fill"></div></div></div><form id="enhance-limit-form" class="limit" hidden><label for="enhance-limit">Daily limit</label><span class="money"><span class="muted">$</span><input type="number" id="enhance-limit" min="0.001" step="0.001" required></span><button type="submit" id="enhance-limit-save" class="action">Save</button></form><p id="enhance-note" class="muted"></p></section>
   <section id="authorization" hidden><h2>Spotify authorization</h2></section>
 </div>
 <script>
@@ -136,7 +144,7 @@ function renderBoard(data) {
   } else {
     parts.push(el("p", "Last sent: " + (KINDS[presentation.kind] || presentation.kind)
       + (presentation.enhanced ? " (AI-enhanced)" : "")
-      + (presentation.generating ? " with the green dot (enhanced version on its way)" : "")
+      + (presentation.generating ? " with the spend bar (enhanced version on its way)" : "")
       + (presentation.stale ? ", marked stale." : ", not marked.")));
     if (board.push_failed) parts.push(el("p", "That push failed; it is being retried.", "bad"));
   }
@@ -149,14 +157,50 @@ function renderBoard(data) {
 let enhanceChanges = 0;
 let enhanceSaving = false;
 let enhanceError = null;
+// The limit field is kept the same way, and also left alone while it has
+// focus, so a poll never overwrites what is being typed.
+let limitChanges = 0;
+let limitSaving = false;
 
-function renderEnhancement(data, changesAtFetch) {
+// The board's own spend bar thresholds and colours (frames.SPEND_BAR_*).
+const SPEND_BAR_AMBER_FROM = 0.75;
+const SPEND_BAR_RED_FROM = 0.90;
+const SPEND_BAR_COLOURS = { green: "rgb(0, 160, 0)", amber: "rgb(255, 176, 0)", red: "rgb(255, 0, 0)" };
+
+// Cents, or a tenth of a cent below $0.10, where single generations show.
+function usd(amount) {
+  return "$" + amount.toFixed(amount < 0.1 ? 3 : 2);
+}
+
+function clock(iso) {
+  return new Date(parse(iso)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function renderEnhancement(data, changesAtFetch, limitChangesAtFetch) {
   const enhancement = data.enhancement;
+  const spend = enhancement.spend;
   const toggle = document.getElementById("enhance-toggle");
   const note = document.getElementById("enhance-note");
   if (!enhanceSaving && changesAtFetch === enhanceChanges) {
     toggle.checked = enhancement.enabled;
     toggle.disabled = !enhancement.available;
+  }
+  document.getElementById("enhance-limit-form").hidden = !enhancement.available;
+  const limit = document.getElementById("enhance-limit");
+  if (!limitSaving && limitChangesAtFetch === limitChanges && document.activeElement !== limit) {
+    // The same precision as the spend line, so a limit under $0.10 is not shown rounded.
+    limit.value = spend.limit_usd.toFixed(spend.limit_usd < 0.1 ? 3 : 2);
+  }
+  const showSpend = enhancement.available && spend.spent_usd !== null;
+  document.getElementById("enhance-spend").hidden = !showSpend;
+  if (showSpend) {
+    document.getElementById("enhance-spend-line").textContent = "Today: " + usd(spend.spent_usd)
+      + " of " + usd(spend.limit_usd) + " (resets " + clock(spend.resets_at) + ")";
+    const fraction = spend.spent_usd / spend.limit_usd;
+    const bar = document.getElementById("enhance-spend-fill");
+    bar.style.width = Math.min(1, Math.max(0, fraction)) * 100 + "%";
+    bar.style.background = fraction < SPEND_BAR_AMBER_FROM ? SPEND_BAR_COLOURS.green
+      : fraction < SPEND_BAR_RED_FROM ? SPEND_BAR_COLOURS.amber : SPEND_BAR_COLOURS.red;
   }
   if (enhanceError) {
     note.textContent = enhanceError;
@@ -171,26 +215,62 @@ function renderEnhancement(data, changesAtFetch) {
   document.getElementById("enhance-cover").textContent = enhancementCoverLine(enhancement);
 }
 
-// One line for what enhancement made of the current cover, and the pause,
-// which applies whether or not a cover is on show.
+// One line for what enhancement made of the current cover, and the pause and
+// the daily limit, which apply whether or not a cover is on show.
 function enhancementCoverLine(enhancement) {
+  const spend = enhancement.spend;
+  const limited = spend.limit_reached
+    ? "today's limit of " + usd(spend.limit_usd) + " is reached; new covers are enhanced again from " + clock(spend.resets_at)
+    : null;
   const paused = enhancement.paused_until
     ? "generation is paused until " + when(enhancement.paused_until) + " (OpenRouter refused the key or its credit)"
     : null;
+  const reasons = [limited, paused].filter(Boolean).join("; also, ");
   switch (enhancement.cover) {
     case "enhanced":
-      return "Current cover: AI-enhanced." + (paused ? " New covers stay plain: " + paused + "." : "");
+      return "Current cover: AI-enhanced." + (reasons ? " New covers stay plain: " + reasons + "." : "");
     case "generating":
-      return "Current cover: generating the enhanced version; the board shows the plain cover with a green dot meanwhile.";
+      return "Current cover: generating the enhanced version; the board shows the plain cover with the spend bar along its bottom meanwhile.";
     case "gave_up":
       return "Current cover: plain, after generating its enhanced version failed. Switch off and on to try again."
-        + (paused ? " Also, " + paused + "." : "");
+        + (reasons ? " Also, " + reasons + "." : "");
     case "plain":
-      return paused ? "Current cover: plain, because " + paused + "." : "Current cover: plain.";
+      return reasons ? "Current cover: plain, because " + reasons + "." : "Current cover: plain.";
     default:
+      if (limited) return "AI enhancement stops for today: " + limited + (paused ? "; also, " + paused : "") + ".";
       return paused ? "AI " + paused + "." : "";
   }
 }
+
+document.getElementById("enhance-limit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const limit = document.getElementById("enhance-limit");
+  const save = document.getElementById("enhance-limit-save");
+  limitChanges += 1;
+  limitSaving = true;
+  enhanceError = null;
+  save.disabled = true;
+  try {
+    const response = await fetch("/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ daily_limit_usd: Number(limit.value) }),
+    });
+    if (!response.ok) throw new Error("status " + response.status);
+  } catch (error) {
+    // The next poll puts the field back to the saved limit.
+    enhanceError = "The limit could not be saved.";
+    const note = document.getElementById("enhance-note");
+    note.textContent = enhanceError;
+    note.className = "bad";
+  } finally {
+    // Out of the field, so the next poll shows what was saved.
+    limit.blur();
+    limitChanges += 1;
+    limitSaving = false;
+    save.disabled = false;
+  }
+});
 
 document.getElementById("enhance-toggle").addEventListener("change", async (event) => {
   const toggle = event.target;
@@ -252,6 +332,7 @@ function renderAuthorization(data) {
 async function refresh() {
   try {
     const changesAtFetch = enhanceChanges;
+    const limitChangesAtFetch = limitChanges;
     const response = await fetch("/status", { cache: "no-store" });
     if (!response.ok) throw new Error("status " + response.status);
     const data = await response.json();
@@ -259,7 +340,7 @@ async function refresh() {
     renderPlayback(data);
     renderReading(data, now);
     renderBoard(data);
-    renderEnhancement(data, changesAtFetch);
+    renderEnhancement(data, changesAtFetch, limitChangesAtFetch);
     renderAuthorization(data);
     document.getElementById("unreachable").hidden = true;
     document.getElementById("sections").hidden = false;

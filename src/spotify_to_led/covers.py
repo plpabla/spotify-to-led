@@ -46,8 +46,8 @@ enhanced cover goes:
 - Then `READY`: enhanced on success, when the frame is also stored as the
   image's enhanced entry, or plain when the enhancer answers `None` or the
   source cannot be downloaded. An image the enhancer has given up on, or any
-  image while generation is paused, is `READY` plain at once, with no source
-  download and no request.
+  image while generation is paused or today's spend limit is reached, is
+  `READY` plain at once, with no source download and no request.
 
 A generation is cancelled like a download when something else is wanted, and
 its frame is stored only if its cover is still wanted, enhanced.
@@ -295,6 +295,7 @@ class CoverLoader:
             enhance_from is not None
             and self._enhancer is not None
             and self._enhancer.paused_until is None
+            and not self._enhancer.limit_reached
             and not self._enhancer.gave_up(enhance_from)
         )
 

@@ -14,7 +14,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -31,6 +31,7 @@ from spotify_to_led.config import ENV_FILE_VARIABLE, Settings
 from spotify_to_led.covers import CoverState, CoverStatus
 from spotify_to_led.enhance import Enhancer
 from spotify_to_led.owner_settings import OwnerSettings, OwnerSettingsStore
+from spotify_to_led.spend import SpendLedger
 from spotify_to_led.spotify.auth import AUTHORIZE_URL, SCOPE, TOKEN_URL
 from spotify_to_led.spotify.playback import (
     Artwork,
@@ -133,6 +134,7 @@ def use_transport(
     monkeypatch.setenv("SPOTIFY_TOKEN_FILE", str(tmp_path / "var" / "spotify-token.json"))
     monkeypatch.setenv("COVER_CACHE_DIR", str(tmp_path / "var" / "covers"))
     monkeypatch.setenv("OWNER_SETTINGS_FILE", str(tmp_path / "var" / "settings.json"))
+    monkeypatch.setenv("AI_SPEND_FILE", str(tmp_path / "var" / "ai-spend.json"))
     # Like the client ID: a developer's real key in `.env` must not make
     # enhancement available; `use_openrouter_key` does that explicitly.
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
@@ -200,7 +202,18 @@ def use_openrouter_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def idle_enhancement(available: bool, enabled: bool) -> dict[str, object]:
     """`/status`'s enhancement with no pause and no cover, as it is without Spotify."""
-    return {"available": available, "enabled": enabled, "paused_until": None, "cover": None}
+    return {
+        "available": available,
+        "enabled": enabled,
+        "paused_until": None,
+        "cover": None,
+        "spend": no_spend(),
+    }
+
+
+def no_spend(limit: float = 1.0) -> dict[str, object]:
+    """`/status`'s spend without an enhancer: the limit only, nothing spent or reached."""
+    return {"spent_usd": None, "limit_usd": limit, "limit_reached": False, "resets_at": None}
 
 
 def state_of(authorize_response: httpx2.Response) -> str:
@@ -670,12 +683,15 @@ def test_put_settings_saves_and_status_reports_it(
         disabled = client.get("/status").json()["enhancement"]
 
     assert before == idle_enhancement(True, False)
-    assert (on.status_code, on.json()) == (200, {"ai_enhanced": True})
+    assert (on.status_code, on.json()) == (200, {"ai_enhanced": True, "daily_limit_usd": 1.0})
     assert enabled == idle_enhancement(True, True)
-    assert (off.status_code, off.json()) == (200, {"ai_enhanced": False})
+    assert (off.status_code, off.json()) == (
+        200,
+        {"ai_enhanced": False, "daily_limit_usd": 1.0},
+    )
     assert disabled == idle_enhancement(True, False)
     saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
-    assert saved == {"ai_enhanced": False}
+    assert saved == {"ai_enhanced": False, "daily_limit_usd": 1.0}
 
 
 def test_the_saved_choice_survives_a_restart(
@@ -730,6 +746,14 @@ def test_put_settings_refuses_a_body_that_is_not_json_and_changes_nothing(
         {"ai_enhanced": None},
         {"ai_enhanced": True, "something_else": 1},
         [True],
+        {"daily_limit_usd": 0},
+        {"daily_limit_usd": 0.0},
+        {"daily_limit_usd": -0.5},
+        {"daily_limit_usd": "1"},
+        {"daily_limit_usd": True},
+        {"ai_enhanced": True, "daily_limit_usd": 0},
+        {"ai_enhanced": None, "daily_limit_usd": None},
+        {"daily_limit_usd": 0.5, "something_else": 1},
     ],
 )
 def test_put_settings_refuses_a_body_of_the_wrong_shape_and_changes_nothing(
@@ -762,7 +786,77 @@ def test_without_a_key_turning_enhancement_on_is_a_409_and_changes_nothing(
     assert enhancement == idle_enhancement(False, False)
     assert off.status_code == 200
     saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
-    assert saved == {"ai_enhanced": False}
+    assert saved == {"ai_enhanced": False, "daily_limit_usd": 1.0}
+
+
+def test_put_settings_takes_a_limit_alone_and_keeps_the_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        assert client.put("/settings", json={"ai_enhanced": True}).status_code == 200
+        limit = client.put("/settings", json={"daily_limit_usd": 0.5})
+        enhancement = client.get("/status").json()["enhancement"]
+        in_memory = main.app.state.owner_settings
+
+    assert (limit.status_code, limit.json()) == (
+        200,
+        {"ai_enhanced": True, "daily_limit_usd": 0.5},
+    )
+    assert enhancement["enabled"] is True
+    assert in_memory == OwnerSettings(ai_enhanced=True, daily_limit_usd=0.5)
+    saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
+    assert saved == {"ai_enhanced": True, "daily_limit_usd": 0.5}
+
+
+def test_put_settings_keeps_the_limit_when_only_the_switch_is_sent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        assert client.put("/settings", json={"daily_limit_usd": 2}).status_code == 200
+        on = client.put("/settings", json={"ai_enhanced": True})
+
+    assert (on.status_code, on.json()) == (200, {"ai_enhanced": True, "daily_limit_usd": 2.0})
+
+
+def test_without_a_key_a_limit_may_still_be_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The 409 is about switching on with nothing to switch, not about the limit.
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        limit = client.put("/settings", json={"daily_limit_usd": 0.25})
+        both = client.put("/settings", json={"ai_enhanced": True, "daily_limit_usd": 0.5})
+
+    assert (limit.status_code, limit.json()) == (
+        200,
+        {"ai_enhanced": False, "daily_limit_usd": 0.25},
+    )
+    assert both.status_code == 409
+    assert main.app.state.owner_settings == OwnerSettings(daily_limit_usd=0.25)
+
+
+def test_a_settings_file_from_before_the_limit_keeps_enhancement_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The file on the Pi at the deploy that brings the limit in.
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "settings.json").write_text('{"ai_enhanced": true}', encoding="utf-8")
+
+    with TestClient(main.app) as client:
+        enhancement = client.get("/status").json()["enhancement"]
+        settings = main.app.state.owner_settings
+
+    assert enhancement == idle_enhancement(True, True)
+    assert settings == OwnerSettings(ai_enhanced=True, daily_limit_usd=1.0)
 
 
 def test_a_choice_saved_with_a_key_is_not_reported_enabled_once_the_key_is_gone(
@@ -826,7 +920,13 @@ def test_the_openrouter_key_is_in_no_answer(
     assert put.status_code == 200
     assert AN_OPENROUTER_KEY not in put.text
     assert AN_OPENROUTER_KEY not in status.text
-    assert set(status.json()["enhancement"]) == {"available", "enabled", "paused_until", "cover"}
+    assert set(status.json()["enhancement"]) == {
+        "available",
+        "enabled",
+        "paused_until",
+        "cover",
+        "spend",
+    }
 
 
 def test_with_spotify_and_a_key_flipping_the_switch_makes_the_enhancer_forget(
@@ -848,6 +948,140 @@ def test_with_spotify_and_a_key_flipping_the_switch_makes_the_enhancer_forget(
         client.put("/settings", json={"ai_enhanced": False})
 
     assert (after_on, after_repeat, len(forgotten)) == (1, 1, 2)
+
+
+def test_changing_only_the_limit_does_not_make_the_enhancer_forget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    use_openrouter_key(monkeypatch)
+    forgotten: list[bool] = []
+    monkeypatch.setattr(Enhancer, "forget", lambda self: forgotten.append(True))
+
+    with TestClient(main.app) as client:
+        client.put("/settings", json={"daily_limit_usd": 0.5})
+        client.put("/settings", json={"ai_enhanced": False, "daily_limit_usd": 2.0})
+
+    assert forgotten == []
+
+
+def test_the_lifespan_gives_the_enhancer_the_ledger_file_and_the_live_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    use_openrouter_key(monkeypatch)
+    today = datetime.now(UTC).date().isoformat()
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "ai-spend.json").write_text(
+        json.dumps({"day": today, "spent_usd": 0.6}), encoding="utf-8"
+    )
+
+    with TestClient(main.app) as client:
+        enhancer = main.app.state.enhancer
+        assert isinstance(enhancer, Enhancer)
+        spent = enhancer.spent_today
+        before = enhancer.limit_reached
+        assert client.put("/settings", json={"daily_limit_usd": 0.5}).status_code == 200
+        after = enhancer.limit_reached
+
+    assert spent == pytest.approx(0.6)
+    assert (before, after) == (False, True)
+
+
+
+def test_the_lifespan_gives_the_display_todays_spend_over_the_live_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # What the board's spend bar is drawn from: without this wiring every
+    # display test would stay green while the bar never appears.
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    use_openrouter_key(monkeypatch)
+    today = datetime.now(UTC).date().isoformat()
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "ai-spend.json").write_text(
+        json.dumps({"day": today, "spent_usd": 0.3}), encoding="utf-8"
+    )
+    passed: dict[str, object] = {}
+
+    async def record(*args: object, **kwargs: object) -> None:
+        passed.update(kwargs)
+
+    monkeypatch.setattr(main, "run_display", record)
+
+    with TestClient(main.app) as client:
+        spend_fraction = passed["spend_fraction"]
+        assert callable(spend_fraction)
+        before = spend_fraction()
+        assert client.put("/settings", json={"daily_limit_usd": 0.6}).status_code == 200
+        after = spend_fraction()
+
+    # The default $1.00 limit, then the one saved from the page, read live.
+    assert (before, after) == (pytest.approx(0.3), pytest.approx(0.5))
+
+def test_without_a_key_status_reports_the_limit_and_no_spend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The limit is the owner's setting and exists without a key; the spend does not.
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+
+    with TestClient(main.app) as client:
+        assert client.put("/settings", json={"daily_limit_usd": 0.25}).status_code == 200
+        spend = client.get("/status").json()["enhancement"]["spend"]
+
+    assert spend == no_spend(0.25)
+
+
+@pytest.mark.parametrize(
+    ("spent", "reached"),
+    [(0.4, False), (0.5, True), (0.6, True)],
+    ids=["under", "at", "over"],
+)
+def test_with_a_key_status_reports_todays_spend_against_the_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, spent: float, reached: bool
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    use_openrouter_key(monkeypatch)
+    now = datetime.now(UTC)
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "settings.json").write_text(
+        json.dumps({"ai_enhanced": True, "daily_limit_usd": 0.5}), encoding="utf-8"
+    )
+    (tmp_path / "var" / "ai-spend.json").write_text(
+        json.dumps({"day": now.date().isoformat(), "spent_usd": spent}), encoding="utf-8"
+    )
+
+    with TestClient(main.app) as client:
+        response = client.get("/status")
+
+    spend = response.json()["enhancement"]["spend"]
+    assert spend["spent_usd"] == pytest.approx(spent)
+    assert spend["limit_usd"] == 0.5
+    assert spend["limit_reached"] is reached
+    # The next 00:00 UTC, when the ledger's day ends.
+    next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), UTC)
+    assert datetime.fromisoformat(spend["resets_at"]) == next_midnight
+    assert AN_OPENROUTER_KEY not in response.text
+
+
+def test_the_status_page_saves_the_limit_through_put_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        page = client.get("/").text
+
+    assert 'id="enhance-limit" min="0.001" step="0.001"' in page
+    # The checkbox's call and the limit's, each a PUT to /settings.
+    assert page.count('fetch("/settings"') == 2
+    assert page.count('method: "PUT"') == 2
+    assert "JSON.stringify({ daily_limit_usd: Number(limit.value) })" in page
+    assert "The limit could not be saved." in page
 
 
 @pytest.mark.parametrize("spotify", [False, True], ids=["key only", "spotify only"])
@@ -873,8 +1107,9 @@ def test_without_both_spotify_and_a_key_there_is_no_enhancer(
             assert client.put("/settings", json={"ai_enhanced": True}).status_code == 200
 
     assert enhancer is None
-    # Without an enhancer the display is not even given the switch.
+    # Without an enhancer the display is not even given the switch, nor a spend.
     assert passed["owner_settings"] is None
+    assert passed["spend_fraction"] is None
 
 
 # What `/status` says enhancement made of the current cover. The loader, the
@@ -927,7 +1162,7 @@ class FakeCoverLoader:
         raise AssertionError("/status must never make the loader want anything")
 
 
-def enhancer_after(answer: int | None) -> Enhancer:
+def enhancer_after(answer: int | None, tmp_path: Path) -> Enhancer:
     """A real enhancer at `AN_INSTANT`, after one enhancement of `WIDE_COVER` answered `answer`.
 
     `None` asks for nothing, so the enhancer is fresh: not paused, given up on nothing.
@@ -939,7 +1174,13 @@ def enhancer_after(answer: int | None) -> Enhancer:
 
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(openrouter)) as client:
             enhancer = Enhancer(
-                client, AN_OPENROUTER_KEY, "a-model", 32, clock=lambda: AN_INSTANT
+                client,
+                AN_OPENROUTER_KEY,
+                "a-model",
+                32,
+                ledger=SpendLedger(tmp_path / "ai-spend.json", clock=lambda: AN_INSTANT),
+                daily_limit=lambda: 1.0,
+                clock=lambda: AN_INSTANT,
             )
             if answer is not None:
                 assert await enhancer.enhance(WIDE_COVER, b"source", "image/png") is None
@@ -990,15 +1231,23 @@ def test_status_reports_what_enhancement_made_of_the_current_cover(
     expected: str | None,
 ) -> None:
     response = status_with(
-        monkeypatch, tmp_path, snapshot=playing(), cover=cover, enhancer=enhancer_after(answer)
+        monkeypatch,
+        tmp_path,
+        snapshot=playing(),
+        cover=cover,
+        enhancer=enhancer_after(answer, tmp_path),
     )
 
-    assert response.json()["enhancement"] == {
+    enhancement = response.json()["enhancement"]
+    resets_at = enhancement["spend"].pop("resets_at")
+    assert enhancement == {
         "available": True,
         "enabled": True,
         "paused_until": None,
         "cover": expected,
+        "spend": {"spent_usd": 0.0, "limit_usd": 1.0, "limit_reached": False},
     }
+    assert datetime.fromisoformat(resets_at) == datetime.fromisoformat("2026-11-12T00:00:00+00:00")
 
 
 @pytest.mark.parametrize(
@@ -1018,7 +1267,7 @@ def test_status_reports_no_cover_when_none_is_wanted(
         tmp_path,
         snapshot=snapshot,
         cover=CoverState(CoverStatus.READY, A_FRAME, enhanced=True),
-        enhancer=enhancer_after(None),
+        enhancer=enhancer_after(None, tmp_path),
     )
 
     assert response.json()["enhancement"]["cover"] is None
@@ -1032,7 +1281,7 @@ def test_status_reports_no_cover_with_the_switch_off(
         tmp_path,
         snapshot=playing(),
         cover=CoverState(CoverStatus.READY, A_FRAME),
-        enhancer=enhancer_after(None),
+        enhancer=enhancer_after(None, tmp_path),
         switched_on=False,
     )
 
@@ -1047,7 +1296,7 @@ def test_a_refusal_is_reported_as_a_pause_until_midnight_utc_and_the_cover_as_pl
         tmp_path,
         snapshot=playing(),
         cover=CoverState(CoverStatus.READY, A_FRAME),
-        enhancer=enhancer_after(402),
+        enhancer=enhancer_after(402, tmp_path),
     )
 
     enhancement = response.json()["enhancement"]
@@ -1067,7 +1316,7 @@ def test_the_pause_is_reported_with_the_switch_off_and_nothing_playing(
         tmp_path,
         snapshot=playing(status=PlaybackStatus.NOTHING_PLAYING),
         cover=CoverState(CoverStatus.PENDING),
-        enhancer=enhancer_after(403),
+        enhancer=enhancer_after(403, tmp_path),
         switched_on=False,
     )
 

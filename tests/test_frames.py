@@ -1,5 +1,6 @@
 """The code-drawn frames and the pure image-to-wire conversion."""
 
+import math
 from collections.abc import Callable
 
 import pytest
@@ -255,81 +256,94 @@ def test_stale_marker_does_not_mutate_its_input(size: int) -> None:
     assert frame_to_pixel_colors(original) == before
 
 
-def _generating_marker_dot(size: int) -> set[tuple[int, int]]:
-    """Return the dot's pixels, from the constants."""
-    inset = frames.GENERATING_MARKER_INSET_PIXELS
-    dot = frames.GENERATING_MARKER_CELLS * (size // 16)
-    return {(x, y) for x in range(inset, inset + dot) for y in range(inset, inset + dot)}
+def _bottom_row(frame: Image.Image) -> list[tuple[int, int, int]]:
+    return [frame.getpixel((x, frame.height - 1)) for x in range(frame.width)]
+
+
+GREEN = frames.SPEND_BAR_GREEN
+AMBER = frames.STALE_MARKER_COLOUR
+RED = frames.SPEND_BAR_RED
+
+
+@pytest.mark.parametrize(
+    ("fraction", "filled_of_32", "colour"),
+    [
+        (0.0, 0, GREEN),
+        (0.5, 16, GREEN),
+        (0.74, 24, GREEN),
+        (0.75, 24, AMBER),
+        (0.89, 29, AMBER),
+        (0.90, 29, RED),
+        (1.0, 32, RED),
+        (1.4, 32, RED),
+    ],
+)
+@pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
+def test_spend_bar_fills_the_bottom_row_in_proportion_and_leaves_the_rest_black(
+    size: int, fraction: float, filled_of_32: int, colour: tuple[int, int, int]
+) -> None:
+    barred = frames.with_spend_bar(_busy_frame(size), fraction)
+    filled = math.ceil(min(fraction, 1.0) * size)
+
+    validate_frame(barred, size)
+    if size == 32:
+        assert filled == filled_of_32
+    assert _bottom_row(barred) == [colour] * filled + [BLACK] * (size - filled)
 
 
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_generating_marker_draws_a_green_dot(size: int) -> None:
-    marked = frames.with_generating_marker(_busy_frame(size))
-    dot = _generating_marker_dot(size)
+def test_spend_bar_rounds_any_spend_up_to_a_lit_pixel(size: int) -> None:
+    barred = frames.with_spend_bar(_busy_frame(size), 0.001)
 
-    validate_frame(marked, size)
-    assert len(dot) == (size // 16) ** 2
-    assert all(marked.getpixel(point) == frames.GENERATING_MARKER_COLOUR for point in dot)
-
-
-def test_generating_marker_is_a_dimmer_green_than_the_placeholder() -> None:
-    red, green, blue = frames.GENERATING_MARKER_COLOUR
-
-    assert green > red and green > blue
-    assert green < frames.PLAYING_COLOUR[1]
+    assert _bottom_row(barred) == [GREEN] + [BLACK] * (size - 1)
 
 
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_generating_marker_sits_one_pixel_in_from_the_top_left_corner(size: int) -> None:
-    dot = _generating_marker_dot(size)
+def test_spend_bar_below_zero_is_an_empty_black_row(size: int) -> None:
+    barred = frames.with_spend_bar(_busy_frame(size), -0.2)
 
-    assert min(x for x, _ in dot) == 1 and min(y for _, y in dot) == 1
-    assert all(x < size // 2 and y < size // 2 for x, y in dot)
+    assert _bottom_row(barred) == [BLACK] * size
 
 
+@pytest.mark.parametrize("fraction", [0.0, 0.5, 1.0])
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_generating_marker_is_half_the_stale_markers_size(size: int) -> None:
-    block, _ = _marker_regions(size)
-
-    assert 4 * len(_generating_marker_dot(size)) == len(block)
-
-
-@pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_generating_marker_has_no_ring_and_leaves_the_rest_unchanged(size: int) -> None:
+def test_spend_bar_changes_only_the_bottom_row(size: int, fraction: float) -> None:
     original = _busy_frame(size)
-    marked = frames.with_generating_marker(original)
+    barred = frames.with_spend_bar(original, fraction)
 
     changed = {
         (x, y)
         for y in range(size)
         for x in range(size)
-        if marked.getpixel((x, y)) != original.getpixel((x, y))
+        if barred.getpixel((x, y)) != original.getpixel((x, y))
     }
 
-    # Only the dot: the cover shows right up to it, corner pixel included.
-    assert changed == _generating_marker_dot(size)
+    # One board pixel high at every size, not scaled by the design grid.
+    assert changed == {(x, size - 1) for x in range(size)}
 
 
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_generating_marker_does_not_mutate_its_input(size: int) -> None:
+def test_spend_bar_does_not_mutate_its_input(size: int) -> None:
     original = _busy_frame(size)
     before = frame_to_pixel_colors(original)
 
-    frames.with_generating_marker(original)
+    frames.with_spend_bar(original, 0.5)
 
     assert frame_to_pixel_colors(original) == before
 
 
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_generating_and_stale_markers_do_not_cover_each_other(size: int) -> None:
-    dot = _generating_marker_dot(size)
+def test_spend_bar_and_stale_marker_do_not_cover_each_other(size: int) -> None:
     block, block_ring = _marker_regions(size)
+    both = frames.with_stale_marker(frames.with_spend_bar(_busy_frame(size), 1.0))
 
-    assert not dot & (block | block_ring)
-    for both in (
-        frames.with_stale_marker(frames.with_generating_marker(_busy_frame(size))),
-        frames.with_generating_marker(frames.with_stale_marker(_busy_frame(size))),
-    ):
-        assert all(both.getpixel(point) == frames.GENERATING_MARKER_COLOUR for point in dot)
-        assert all(both.getpixel(point) == frames.STALE_MARKER_COLOUR for point in block)
-        assert all(both.getpixel(point) == BLACK for point in block_ring)
+    assert _bottom_row(both) == [RED] * size
+    assert all(both.getpixel(point) == AMBER for point in block)
+    assert all(both.getpixel(point) == BLACK for point in block_ring)
+
+
+def test_spend_bar_green_is_dimmer_than_the_placeholder() -> None:
+    red, green, blue = frames.SPEND_BAR_GREEN
+
+    assert green > red and green > blue
+    assert green < frames.PLAYING_COLOUR[1]

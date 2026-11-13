@@ -68,7 +68,11 @@ def _png_with_a_damaged_chunk() -> bytes:
 
 
 def an_answer(body: object, status: int = 200) -> httpx2.Response:
-    return httpx2.Response(status, json=body)
+    # Encoded as Python's own encoder does by default, `NaN` and `Infinity`
+    # included, since that is what the decoder on the other side accepts.
+    return httpx2.Response(
+        status, content=json.dumps(body).encode(), headers={"content-type": "application/json"}
+    )
 
 
 def a_generated_image(cost: object = 0.009) -> httpx2.Response:
@@ -165,8 +169,18 @@ async def test_a_good_answer_decodes_to_the_image_and_its_cost() -> None:
         a_generated_image(cost=None),
         a_generated_image(cost="0.009"),
         a_generated_image(cost=True),
+        a_generated_image(cost=float("nan")),
+        a_generated_image(cost=float("inf")),
+        a_generated_image(cost=-0.009),
     ],
-    ids=["no usage", "cost not a number", "cost a boolean"],
+    ids=[
+        "no usage",
+        "cost not a number",
+        "cost a boolean",
+        "cost NaN",
+        "cost infinite",
+        "cost negative",
+    ],
 )
 async def test_a_good_answer_without_a_usable_cost_has_none(
     answer: httpx2.Response,
@@ -362,8 +376,38 @@ class FakeClock:
         return self.now
 
 
+class MemoryLedger:
+    """Today's spend held in memory, standing in for a `SpendLedger` and its file."""
+
+    def __init__(self, spent: float = 0.0) -> None:
+        self.spent = spent
+        self.recorded: list[float] = []
+
+    def spent_today(self) -> float:
+        return self.spent
+
+    def record(self, cost: float) -> None:
+        self.recorded.append(cost)
+        self.spent += cost
+
+
+class Limit:
+    """The owner's daily limit, which a test may change between calls."""
+
+    def __init__(self, usd: float = 1.0) -> None:
+        self.usd = usd
+
+    def __call__(self) -> float:
+        return self.usd
+
+
 def an_enhancer(
-    server: ScriptedOpenRouter, sleep: RecordingSleep, clock: FakeClock | None = None
+    server: ScriptedOpenRouter,
+    sleep: RecordingSleep,
+    clock: FakeClock | None = None,
+    *,
+    ledger: MemoryLedger | None = None,
+    limit: Limit | None = None,
 ) -> Enhancer:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(server))
     return Enhancer(
@@ -371,6 +415,8 @@ def an_enhancer(
         AN_API_KEY,
         A_MODEL,
         BOARD_SIZE,
+        ledger=ledger or MemoryLedger(),
+        daily_limit=limit or Limit(),
         clock=clock or FakeClock(AFTERNOON),
         sleep=sleep,
     )
@@ -555,3 +601,109 @@ async def test_the_key_never_appears_in_the_enhancers_log(
     assert len(server.requests) == 3
     assert caplog.records, "the outcomes are logged"
     assert AN_API_KEY not in caplog.text
+
+
+async def test_a_success_records_its_reported_cost() -> None:
+    ledger = MemoryLedger()
+    server = ScriptedOpenRouter([a_generated_image(cost=0.009)])
+    enhancer = an_enhancer(server, RecordingSleep(), ledger=ledger)
+
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+
+    assert ledger.recorded == [0.009]
+    assert enhancer.spent_today == pytest.approx(0.009)
+
+
+@pytest.mark.parametrize(
+    "cost", [None, float("nan"), float("inf"), -0.009], ids=["none", "NaN", "infinite", "negative"]
+)
+async def test_a_success_without_a_usable_cost_records_nothing_and_warns(
+    cost: float | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    ledger = MemoryLedger()
+    server = ScriptedOpenRouter([a_generated_image(cost=cost)])
+    enhancer = an_enhancer(server, RecordingSleep(), ledger=ledger)
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.enhance"):
+        assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+
+    assert ledger.recorded == []
+    assert enhancer.spent_today == 0.0
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "cost not reported" in record.getMessage()
+
+
+async def test_a_failure_records_nothing() -> None:
+    ledger = MemoryLedger()
+    server = ScriptedOpenRouter([an_answer({"error": {"message": "bad input image"}}, 400)])
+    enhancer = an_enhancer(server, RecordingSleep(), ledger=ledger)
+
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+
+    assert ledger.recorded == []
+
+
+@pytest.mark.parametrize("spent", [1.0, 1.5], ids=["at the limit", "over it"])
+async def test_at_or_over_the_limit_no_request_is_made(
+    spent: float, caplog: pytest.LogCaptureFixture
+) -> None:
+    server = ScriptedOpenRouter([])
+    enhancer = an_enhancer(server, RecordingSleep(), ledger=MemoryLedger(spent), limit=Limit(1.0))
+
+    assert enhancer.limit_reached
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.enhance"):
+        assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+
+    assert server.requests == []
+    # Not a give-up: the image is fine, today's money is spent.
+    assert not enhancer.gave_up(A_COVER_URL)
+    assert [r.levelno for r in caplog.records] == [logging.INFO]
+    assert A_COVER_URL in caplog.records[0].getMessage()
+
+
+async def test_just_under_the_limit_one_call_is_made_and_may_cross_it() -> None:
+    ledger = MemoryLedger(0.995)
+    server = ScriptedOpenRouter([a_generated_image(cost=0.009), a_generated_image()])
+    enhancer = an_enhancer(server, RecordingSleep(), ledger=ledger, limit=Limit(1.0))
+
+    assert not enhancer.limit_reached
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+
+    assert len(server.requests) == 1
+    assert enhancer.spent_today == pytest.approx(1.004)
+    assert enhancer.limit_reached
+    # The next image is not started.
+    assert await enhancer.enhance(ANOTHER_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert len(server.requests) == 1
+
+
+async def test_the_limit_is_checked_once_so_retries_are_not_cut_short() -> None:
+    ledger = MemoryLedger(0.5)
+    limit = Limit(1.0)
+    server = ScriptedOpenRouter([retryable(), a_generated_image()])
+
+    class LowerTheLimit(RecordingSleep):
+        async def __call__(self, seconds: float) -> None:
+            # The owner lowers the limit below today's spend between attempts.
+            limit.usd = 0.1
+
+    enhancer = an_enhancer(server, LowerTheLimit(), ledger=ledger, limit=limit)
+
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+    assert len(server.requests) == 2
+
+
+async def test_the_limit_is_read_live_so_raising_it_lets_the_next_cover_generate() -> None:
+    limit = Limit(0.5)
+    server = ScriptedOpenRouter([a_generated_image()])
+    enhancer = an_enhancer(server, RecordingSleep(), ledger=MemoryLedger(0.5), limit=limit)
+
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is None
+    assert server.requests == []
+
+    limit.usd = 2.0
+
+    assert not enhancer.limit_reached
+    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+    assert len(server.requests) == 1
