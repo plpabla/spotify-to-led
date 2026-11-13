@@ -1,7 +1,7 @@
 ---
 change_id: display-usage
 title: Show daily AI cover cost on the page and board, with an enforced daily limit
-status: implementing
+status: implemented
 created: 2026-11-13
 updated: 2026-11-13
 archived_at: null
