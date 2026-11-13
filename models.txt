@@ -3,3 +3,8 @@
 # The first id is the default: it is used until the owner picks another, and
 # whenever the saved pick is no longer in this list.
 black-forest-labs/flux-3-image-klein
+krea/krea-2-medium-turbo
+bytedance-seed/seedream-5-0-flash
+qwen/qwen-image-2.1-pro
+x-ai/grok-imagine-image-2.0
+openai/gpt-image-1-mini

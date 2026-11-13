@@ -51,6 +51,9 @@ A_CODE = "AQD-the-authorization-code"
 AN_ACCESS_TOKEN = "BQ-the-access-token"
 A_REFRESH_TOKEN = "AQ-the-refresh-token"
 AN_OPENROUTER_KEY = "sk-or-v1-the-openrouter-key"
+# The model list `use_transport` writes; the first is in use until another is picked.
+FIRST_MODEL = "a/first-model"
+SECOND_MODEL = "b/second-model"
 
 
 class CountingTransport:
@@ -135,6 +138,9 @@ def use_transport(
     monkeypatch.setenv("COVER_CACHE_DIR", str(tmp_path / "var" / "covers"))
     monkeypatch.setenv("OWNER_SETTINGS_FILE", str(tmp_path / "var" / "settings.json"))
     monkeypatch.setenv("AI_SPEND_FILE", str(tmp_path / "var" / "ai-spend.json"))
+    model_list = tmp_path / "models.txt"
+    model_list.write_text(f"{FIRST_MODEL}\n{SECOND_MODEL}\n", encoding="utf-8")
+    monkeypatch.setenv("MODEL_LIST_FILE", str(model_list))
     # Like the client ID: a developer's real key in `.env` must not make
     # enhancement available; `use_openrouter_key` does that explicitly.
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
@@ -208,6 +214,8 @@ def idle_enhancement(available: bool, enabled: bool) -> dict[str, object]:
         "paused_until": None,
         "cover": None,
         "spend": no_spend(),
+        "models": [FIRST_MODEL, SECOND_MODEL],
+        "model": FIRST_MODEL,
     }
 
 
@@ -683,11 +691,14 @@ def test_put_settings_saves_and_status_reports_it(
         disabled = client.get("/status").json()["enhancement"]
 
     assert before == idle_enhancement(True, False)
-    assert (on.status_code, on.json()) == (200, {"ai_enhanced": True, "daily_limit_usd": 1.0})
+    assert (on.status_code, on.json()) == (
+        200,
+        {"ai_enhanced": True, "daily_limit_usd": 1.0, "model": None},
+    )
     assert enabled == idle_enhancement(True, True)
     assert (off.status_code, off.json()) == (
         200,
-        {"ai_enhanced": False, "daily_limit_usd": 1.0},
+        {"ai_enhanced": False, "daily_limit_usd": 1.0, "model": None},
     )
     assert disabled == idle_enhancement(True, False)
     saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
@@ -754,6 +765,9 @@ def test_put_settings_refuses_a_body_that_is_not_json_and_changes_nothing(
         {"ai_enhanced": True, "daily_limit_usd": 0},
         {"ai_enhanced": None, "daily_limit_usd": None},
         {"daily_limit_usd": 0.5, "something_else": 1},
+        {"model": 1},
+        {"model": ["a/first-model"]},
+        {"model": None},
     ],
 )
 def test_put_settings_refuses_a_body_of_the_wrong_shape_and_changes_nothing(
@@ -803,7 +817,7 @@ def test_put_settings_takes_a_limit_alone_and_keeps_the_switch(
 
     assert (limit.status_code, limit.json()) == (
         200,
-        {"ai_enhanced": True, "daily_limit_usd": 0.5},
+        {"ai_enhanced": True, "daily_limit_usd": 0.5, "model": None},
     )
     assert enhancement["enabled"] is True
     assert in_memory == OwnerSettings(ai_enhanced=True, daily_limit_usd=0.5)
@@ -821,7 +835,10 @@ def test_put_settings_keeps_the_limit_when_only_the_switch_is_sent(
         assert client.put("/settings", json={"daily_limit_usd": 2}).status_code == 200
         on = client.put("/settings", json={"ai_enhanced": True})
 
-    assert (on.status_code, on.json()) == (200, {"ai_enhanced": True, "daily_limit_usd": 2.0})
+    assert (on.status_code, on.json()) == (
+        200,
+        {"ai_enhanced": True, "daily_limit_usd": 2.0, "model": None},
+    )
 
 
 def test_without_a_key_a_limit_may_still_be_set(
@@ -836,7 +853,7 @@ def test_without_a_key_a_limit_may_still_be_set(
 
     assert (limit.status_code, limit.json()) == (
         200,
-        {"ai_enhanced": False, "daily_limit_usd": 0.25},
+        {"ai_enhanced": False, "daily_limit_usd": 0.25, "model": None},
     )
     assert both.status_code == 409
     assert main.app.state.owner_settings == OwnerSettings(daily_limit_usd=0.25)
@@ -926,6 +943,8 @@ def test_the_openrouter_key_is_in_no_answer(
         "paused_until",
         "cover",
         "spend",
+        "models",
+        "model",
     }
 
 
@@ -964,6 +983,116 @@ def test_changing_only_the_limit_does_not_make_the_enhancer_forget(
         client.put("/settings", json={"ai_enhanced": False, "daily_limit_usd": 2.0})
 
     assert forgotten == []
+
+
+def test_status_reports_the_model_list_and_the_first_id_in_use_without_a_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        enhancement = client.get("/status").json()["enhancement"]
+
+    assert enhancement["models"] == [FIRST_MODEL, SECOND_MODEL]
+    assert enhancement["model"] == FIRST_MODEL
+
+
+def test_put_settings_saves_a_listed_model_and_status_reports_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        response = client.put("/settings", json={"model": SECOND_MODEL})
+        enhancement = client.get("/status").json()["enhancement"]
+        in_memory = main.app.state.owner_settings
+
+    assert (response.status_code, response.json()) == (
+        200,
+        {"ai_enhanced": False, "daily_limit_usd": 1.0, "model": SECOND_MODEL},
+    )
+    assert enhancement["model"] == SECOND_MODEL
+    assert in_memory == OwnerSettings(model=SECOND_MODEL)
+    saved = json.loads((tmp_path / "var" / "settings.json").read_text(encoding="utf-8"))
+    assert saved == {"ai_enhanced": False, "daily_limit_usd": 1.0, "model": SECOND_MODEL}
+
+
+def test_a_model_not_in_the_list_is_a_409_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        response = client.put("/settings", json={"ai_enhanced": True, "model": "c/unlisted"})
+        enhancement = client.get("/status").json()["enhancement"]
+        in_memory = main.app.state.owner_settings
+
+    assert response.status_code == 409
+    assert response.text == "That model is not in the model list."
+    assert enhancement["enabled"] is False
+    assert enhancement["model"] == FIRST_MODEL
+    assert in_memory == OwnerSettings()
+    assert not (tmp_path / "var" / "settings.json").exists()
+
+
+def test_put_settings_takes_a_model_alone_and_keeps_the_switch_and_the_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        both = {"ai_enhanced": True, "daily_limit_usd": 0.5}
+        assert client.put("/settings", json=both).status_code == 200
+        model = client.put("/settings", json={"model": SECOND_MODEL})
+        # And the model is kept when only the others are sent.
+        limit = client.put("/settings", json={"daily_limit_usd": 0.25})
+
+    assert model.json() == {"ai_enhanced": True, "daily_limit_usd": 0.5, "model": SECOND_MODEL}
+    assert limit.json() == {"ai_enhanced": True, "daily_limit_usd": 0.25, "model": SECOND_MODEL}
+
+
+def test_changing_the_model_in_use_makes_the_enhancer_forget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    use_openrouter_key(monkeypatch)
+
+    with TestClient(main.app) as client:
+        enhancer = main.app.state.enhancer
+        assert isinstance(enhancer, Enhancer)
+        enhancer._gave_up.add(WIDE_COVER)
+        # Without a pick the first id is already in use, so naming it changes nothing.
+        client.put("/settings", json={"model": FIRST_MODEL})
+        kept_on_same = enhancer.gave_up(WIDE_COVER)
+        client.put("/settings", json={"model": SECOND_MODEL})
+        cleared_on_change = not enhancer.gave_up(WIDE_COVER)
+        enhancer._gave_up.add(WIDE_COVER)
+        # The same model again is no change, so nothing to forget.
+        client.put("/settings", json={"model": SECOND_MODEL})
+        kept_on_repeat = enhancer.gave_up(WIDE_COVER)
+
+    assert (kept_on_same, cleared_on_change, kept_on_repeat) == (True, True, True)
+
+
+def test_a_saved_model_removed_from_the_list_gives_way_to_the_first_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        assert client.put("/settings", json={"model": SECOND_MODEL}).status_code == 200
+        (tmp_path / "models.txt").write_text(f"{FIRST_MODEL}\n", encoding="utf-8")
+        enhancement = client.get("/status").json()["enhancement"]
+        saved = main.app.state.owner_settings.model
+
+    assert enhancement["models"] == [FIRST_MODEL]
+    assert enhancement["model"] == FIRST_MODEL
+    # The pick itself stays saved: listed again, it is in use again.
+    assert saved == SECOND_MODEL
 
 
 def test_the_lifespan_gives_the_enhancer_the_ledger_file_and_the_live_limit(
@@ -1246,6 +1375,8 @@ def test_status_reports_what_enhancement_made_of_the_current_cover(
         "paused_until": None,
         "cover": expected,
         "spend": {"spent_usd": 0.0, "limit_usd": 1.0, "limit_reached": False},
+        "models": [FIRST_MODEL, SECOND_MODEL],
+        "model": FIRST_MODEL,
     }
     assert datetime.fromisoformat(resets_at) == datetime.fromisoformat("2026-11-12T00:00:00+00:00")
 

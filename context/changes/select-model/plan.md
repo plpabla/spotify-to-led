@@ -346,18 +346,18 @@ Add a button that redraws the cover now on show with the selected model and repl
 
 #### Automated
 
-- [x] 1.1 Full test suite passes: `uv run pytest`
-- [x] 1.2 No `openrouter_model` left in code or tests: `grep -rn openrouter_model src tests scripts` returns nothing
+- [x] 1.1 Full test suite passes: `uv run pytest` — 7fecc6f
+- [x] 1.2 No `openrouter_model` left in code or tests: `grep -rn openrouter_model src tests scripts` returns nothing — 7fecc6f
 
 #### Manual
 
-- [x] 1.3 `uv run python -m spotify_to_led.main` starts on the laptop with the shipped `models.txt`, and with `MODEL_LIST_FILE` pointing at a missing file (one WARNING, service up)
+- [x] 1.3 `uv run python -m spotify_to_led.main` starts on the laptop with the shipped `models.txt`, and with `MODEL_LIST_FILE` pointing at a missing file (one WARNING, service up) — 7fecc6f
 
 ### Phase 2: Routes
 
 #### Automated
 
-- [ ] 2.1 Full test suite passes: `uv run pytest`
+- [x] 2.1 Full test suite passes: `uv run pytest`
 
 #### Manual
 

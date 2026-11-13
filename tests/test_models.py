@@ -78,6 +78,49 @@ def test_a_missing_list_falls_back_and_warns(
     assert "missing.txt" in record.getMessage()
 
 
+def test_a_list_still_missing_is_warned_about_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # `/status` reads the list every few seconds; one line says it all.
+    path = tmp_path / "missing.txt"
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            assert load_models(path) == (FALLBACK_MODEL,)
+
+    assert len(caplog.records) == 1
+
+
+def test_a_list_fixed_and_broken_again_is_warned_about_again(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "models.txt"
+
+    with caplog.at_level(logging.WARNING):
+        load_models(path)
+        a_list(tmp_path, "a/one\n")
+        assert load_models(path) == ("a/one",)
+        path.unlink()
+        load_models(path)
+
+    assert len(caplog.records) == 2
+
+
+def test_a_list_whose_problem_changes_is_warned_about_again(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "models.txt"
+
+    with caplog.at_level(logging.WARNING):
+        load_models(path)
+        a_list(tmp_path, "# no model yet\n")
+        load_models(path)
+        load_models(path)
+
+    assert len(caplog.records) == 2
+    assert "names no model" in caplog.records[1].getMessage()
+
+
 def test_a_list_that_is_not_text_falls_back_and_warns(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
