@@ -361,7 +361,7 @@ Add a button that redraws the cover now on show with the selected model and repl
 
 #### Manual
 
-- [ ] 2.2 With the service running, `curl -X PUT -H 'Content-Type: application/json' -d '{"model":"<listed id>"}' localhost:8000/settings` saves it, and `/status` shows it as `enhancement.model`
+- [x] 2.2 With the service running, `curl -X PUT -H 'Content-Type: application/json' -d '{"model":"<listed id>"}' localhost:8000/settings` saves it, and `/status` shows it as `enhancement.model` — 263bef2
 
 ### Phase 3: Page and docs
 
@@ -380,10 +380,10 @@ Add a button that redraws the cover now on show with the selected model and repl
 
 #### Automated
 
-- [x] 4.1 Full test suite passes: `uv run pytest`
+- [x] 4.1 Full test suite passes: `uv run pytest` — febb8b2
 
 #### Manual
 
-- [ ] 4.2 On the Pi with enhancement on: pick a different model, press Regenerate; the board shows the plain cover with the spend bar, then the new enhanced cover; the log's "cover enhanced" line names the new model; the next time the item plays, the new frame is shown from the cache
-- [ ] 4.3 The button is disabled with enhancement off, while generating, and once today's limit is reached
-- [ ] 4.4 Today's spend on the page goes up by the regeneration's cost
+- [x] 4.2 On the Pi with enhancement on: pick a different model, press Regenerate; the board shows the plain cover with the spend bar, then the new enhanced cover; the log's "cover enhanced" line names the new model; the next time the item plays, the new frame is shown from the cache — febb8b2
+- [x] 4.3 The button is disabled with enhancement off, while generating, and once today's limit is reached — febb8b2
+- [x] 4.4 Today's spend on the page goes up by the regeneration's cost — febb8b2
