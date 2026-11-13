@@ -24,7 +24,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from spotify_to_led.enhance import Clock, next_utc_midnight
-from spotify_to_led.owner_settings import write_json_atomically
+from spotify_to_led.state_file import write_json_atomically
 
 logger = logging.getLogger(__name__)
 

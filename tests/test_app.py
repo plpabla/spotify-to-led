@@ -990,6 +990,37 @@ def test_the_lifespan_gives_the_enhancer_the_ledger_file_and_the_live_limit(
     assert (before, after) == (False, True)
 
 
+
+def test_the_lifespan_gives_the_display_todays_spend_over_the_live_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # What the board's spend bar is drawn from: without this wiring every
+    # display test would stay green while the bar never appears.
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    use_spotify(monkeypatch, FakeSpotify())
+    use_openrouter_key(monkeypatch)
+    today = datetime.now(UTC).date().isoformat()
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "ai-spend.json").write_text(
+        json.dumps({"day": today, "spent_usd": 0.3}), encoding="utf-8"
+    )
+    passed: dict[str, object] = {}
+
+    async def record(*args: object, **kwargs: object) -> None:
+        passed.update(kwargs)
+
+    monkeypatch.setattr(main, "run_display", record)
+
+    with TestClient(main.app) as client:
+        spend_fraction = passed["spend_fraction"]
+        assert callable(spend_fraction)
+        before = spend_fraction()
+        assert client.put("/settings", json={"daily_limit_usd": 0.6}).status_code == 200
+        after = spend_fraction()
+
+    # The default $1.00 limit, then the one saved from the page, read live.
+    assert (before, after) == (pytest.approx(0.3), pytest.approx(0.5))
+
 def test_without_a_key_status_reports_the_limit_and_no_spend(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1045,7 +1076,7 @@ def test_the_status_page_saves_the_limit_through_put_settings(
     with TestClient(main.app) as client:
         page = client.get("/").text
 
-    assert 'id="enhance-limit" min="0.01" step="0.01"' in page
+    assert 'id="enhance-limit" min="0.001" step="0.001"' in page
     # The checkbox's call and the limit's, each a PUT to /settings.
     assert page.count('fetch("/settings"') == 2
     assert page.count('method: "PUT"') == 2
@@ -1076,8 +1107,9 @@ def test_without_both_spotify_and_a_key_there_is_no_enhancer(
             assert client.put("/settings", json={"ai_enhanced": True}).status_code == 200
 
     assert enhancer is None
-    # Without an enhancer the display is not even given the switch.
+    # Without an enhancer the display is not even given the switch, nor a spend.
     assert passed["owner_settings"] is None
+    assert passed["spend_fraction"] is None
 
 
 # What `/status` says enhancement made of the current cover. The loader, the

@@ -52,7 +52,8 @@ loader calls. It hands back a finished board frame, shrunk with
   limit is allowed and its retries are not cut short.
 
 Each image's outcome is logged once, naming the image's URL: INFO with the
-cost on success, a WARNING when the enhancer gives up or pauses. A retry is an
+cost on success, a WARNING when the enhancer gives up or pauses, or when a
+success reports no cost, which the daily limit then cannot count. A retry is an
 INFO line of its own, and so is an image not started because the limit is
 reached. The key is in none of them.
 """
@@ -61,6 +62,7 @@ import asyncio
 import base64
 import binascii
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
@@ -238,10 +240,17 @@ def _decode_image(payload: dict[str, Any]) -> Image.Image:
 
 
 def _cost(payload: dict[str, Any]) -> float | None:
-    """`usage.cost` from a successful answer, or `None` when it is missing."""
+    """`usage.cost` from a successful answer, or `None` when it is missing or not an amount.
+
+    The JSON decoder reads `NaN` and `Infinity`, and a `NaN` added to today's
+    spend would make the limit never reached and the spend bar undrawable; a
+    negative cost would lower the total. Neither is a cost to count.
+    """
     usage = payload.get("usage")
     cost = usage.get("cost") if isinstance(usage, dict) else None
     if isinstance(cost, bool) or not isinstance(cost, int | float):
+        return None
+    if not math.isfinite(cost) or cost < 0:
         return None
     return float(cost)
 
@@ -409,10 +418,17 @@ class Enhancer:
                 )
                 return None
             else:
-                cost = f"${generated.cost:.4f}" if generated.cost is not None else "not reported"
-                logger.info("cover enhanced: %s (cost %s)", url, cost)
                 if generated.cost is not None:
+                    logger.info("cover enhanced: %s (cost $%.4f)", url, generated.cost)
                     self._ledger.record(generated.cost)
+                else:
+                    # Nothing to add to today's spend, so the daily limit
+                    # cannot see this call; loud enough to be noticed if it
+                    # starts happening for every cover.
+                    logger.warning(
+                        "cover enhanced: %s (cost not reported; not counted toward today's limit)",
+                        url,
+                    )
                 # Off the event loop for the same reason as the decode.
                 return await asyncio.to_thread(render_enhanced, generated.image, self._size)
         # The loop returns on its last attempt whatever the outcome.

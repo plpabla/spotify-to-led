@@ -68,7 +68,11 @@ def _png_with_a_damaged_chunk() -> bytes:
 
 
 def an_answer(body: object, status: int = 200) -> httpx2.Response:
-    return httpx2.Response(status, json=body)
+    # Encoded as Python's own encoder does by default, `NaN` and `Infinity`
+    # included, since that is what the decoder on the other side accepts.
+    return httpx2.Response(
+        status, content=json.dumps(body).encode(), headers={"content-type": "application/json"}
+    )
 
 
 def a_generated_image(cost: object = 0.009) -> httpx2.Response:
@@ -165,8 +169,18 @@ async def test_a_good_answer_decodes_to_the_image_and_its_cost() -> None:
         a_generated_image(cost=None),
         a_generated_image(cost="0.009"),
         a_generated_image(cost=True),
+        a_generated_image(cost=float("nan")),
+        a_generated_image(cost=float("inf")),
+        a_generated_image(cost=-0.009),
     ],
-    ids=["no usage", "cost not a number", "cost a boolean"],
+    ids=[
+        "no usage",
+        "cost not a number",
+        "cost a boolean",
+        "cost NaN",
+        "cost infinite",
+        "cost negative",
+    ],
 )
 async def test_a_good_answer_without_a_usable_cost_has_none(
     answer: httpx2.Response,
@@ -600,14 +614,24 @@ async def test_a_success_records_its_reported_cost() -> None:
     assert enhancer.spent_today == pytest.approx(0.009)
 
 
-async def test_a_success_without_a_reported_cost_records_nothing() -> None:
+@pytest.mark.parametrize(
+    "cost", [None, float("nan"), float("inf"), -0.009], ids=["none", "NaN", "infinite", "negative"]
+)
+async def test_a_success_without_a_usable_cost_records_nothing_and_warns(
+    cost: float | None, caplog: pytest.LogCaptureFixture
+) -> None:
     ledger = MemoryLedger()
-    server = ScriptedOpenRouter([a_generated_image(cost=None)])
+    server = ScriptedOpenRouter([a_generated_image(cost=cost)])
     enhancer = an_enhancer(server, RecordingSleep(), ledger=ledger)
 
-    assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.enhance"):
+        assert await enhancer.enhance(A_COVER_URL, SOURCE, SOURCE_MIME) is not None
 
     assert ledger.recorded == []
+    assert enhancer.spent_today == 0.0
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "cost not reported" in record.getMessage()
 
 
 async def test_a_failure_records_nothing() -> None:

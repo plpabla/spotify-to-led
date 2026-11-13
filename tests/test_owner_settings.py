@@ -16,7 +16,6 @@ from spotify_to_led.owner_settings import (
     DEFAULT_DAILY_LIMIT_USD,
     OwnerSettings,
     OwnerSettingsStore,
-    write_json_atomically,
 )
 
 
@@ -141,11 +140,3 @@ def test_a_failed_write_leaves_the_previous_file_intact(
     assert store.load() == OwnerSettings(ai_enhanced=False)
     assert [entry.name for entry in tmp_path.iterdir()] == ["settings.json"]
 
-
-def test_an_atomic_write_holds_the_json_and_leaves_no_temp_file(tmp_path: Path) -> None:
-    path = tmp_path / "var" / "state.json"
-
-    write_json_atomically(path, {"a": 1, "b": [True, None]})
-
-    assert json.loads(path.read_text(encoding="utf-8")) == {"a": 1, "b": [True, None]}
-    assert [entry.name for entry in path.parent.iterdir()] == ["state.json"]
