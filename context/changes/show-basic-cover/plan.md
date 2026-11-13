@@ -345,7 +345,7 @@ None. No stored data changes; `/status` gains a field.
 
 #### Manual
 
-- [ ] 2.4 Local run with the stub transport shows the generating then enhanced log lines and correct status-page text
+- [x] 2.4 Local run with the stub transport shows the generating then enhanced log lines and correct status-page text
 
 ### Phase 3: Docs and Pi check
 
