@@ -9,7 +9,8 @@ server down with it.
 
 The display task (`display.run_display`) connects to the board, reconnecting
 with backoff whenever the link is down, and shows the cover of what is playing,
-with a small green dot while its AI-enhanced frame is generated, the
+with a small green dot and the spend bar while its AI-enhanced frame is
+generated, the
 playing placeholder while that cover is not on hand, the no-artwork disc
 for an item with no artwork at all, or the idle frame, from the reader's
 snapshot. Covers are downloaded by a `CoverLoader` beside
@@ -22,17 +23,21 @@ With an OpenRouter key and Spotify both configured, the loader also gets an
 `Enhancer` on the same client, and the display reads the owner's switch on
 every sample: switched on, covers are redrawn by an image model (FR-019),
 each image once, kept beside its plain frame in the cache. Switched off, or
-without a key, no OpenRouter request is made.
+without a key, no OpenRouter request is made. What each generation cost is
+added up per UTC day in `AI_SPEND_FILE`, and once today's total reaches the
+owner's daily limit no generation starts until 00:00 UTC.
 
 The status page at `/` is static and renders `/status`, which reports the
 believed playback, the authorization and the board link, including the case
 where the display task has ended, so a board fault is explained, not hidden.
 It also reports what enhancement is doing: whether the current cover is
 enhanced, plain, being generated or plain after a give-up, and until when
-generation is paused after a refusal. Its one control, the AI-enhanced covers checkbox, writes through
-`PUT /settings`, which keeps the owner's choice in `OWNER_SETTINGS_FILE` so it
-survives a restart. A change of it also makes the enhancer forget the images
-it gave up on, so switching off and on is how the owner asks for another try.
+generation is paused after a refusal, and today's spend against the daily
+limit. Its two controls, the AI-enhanced covers checkbox and the daily limit,
+write through `PUT /settings`, which keeps the owner's choices in
+`OWNER_SETTINGS_FILE` so they survive a restart. A flip of the switch also
+makes the enhancer forget the images it gave up on, so switching off and on is
+how the owner asks for another try.
 
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the

@@ -375,8 +375,8 @@ The existing `var/settings.json` (`{"ai_enhanced": true}`) loads with the $1.00 
 
 #### Automated
 
-- [ ] 4.1 Full suite still passes: `uv run pytest`
-- [ ] 4.2 `grep -n "display-usage" context/foundation/prd.md` finds the FR-019 note
+- [x] 4.1 Full suite still passes: `uv run pytest`
+- [x] 4.2 `grep -n "display-usage" context/foundation/prd.md` finds the FR-019 note
 
 #### Manual
 
