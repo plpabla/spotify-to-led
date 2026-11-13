@@ -405,6 +405,8 @@ def test_the_status_page_is_served_and_renders_status_without_innerhtml(
     assert 'fetch("/status"' in response.text
     assert 'link.href = "/authorize"' in response.text
     assert 'fetch("/settings"' in response.text
+    assert '<select id="enhance-model">' in response.text
+    assert "JSON.stringify({ model: model.value })" in response.text
     # A cheap guard on the rule that Spotify's text goes in as text: item
     # names are attacker-influenceable, anyone can name a podcast episode.
     assert "innerHTML" not in response.text
@@ -1206,9 +1208,9 @@ def test_the_status_page_saves_the_limit_through_put_settings(
         page = client.get("/").text
 
     assert 'id="enhance-limit" min="0.001" step="0.001"' in page
-    # The checkbox's call and the limit's, each a PUT to /settings.
-    assert page.count('fetch("/settings"') == 2
-    assert page.count('method: "PUT"') == 2
+    # The checkbox's call, the limit's and the model's, each a PUT to /settings.
+    assert page.count('fetch("/settings"') == 3
+    assert page.count('method: "PUT"') == 3
     assert "JSON.stringify({ daily_limit_usd: Number(limit.value) })" in page
     assert "The limit could not be saved." in page
 

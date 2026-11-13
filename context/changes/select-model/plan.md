@@ -357,7 +357,7 @@ Add a button that redraws the cover now on show with the selected model and repl
 
 #### Automated
 
-- [x] 2.1 Full test suite passes: `uv run pytest`
+- [x] 2.1 Full test suite passes: `uv run pytest` — 263bef2
 
 #### Manual
 
@@ -367,14 +367,14 @@ Add a button that redraws the cover now on show with the selected model and repl
 
 #### Automated
 
-- [ ] 3.1 Full test suite passes: `uv run pytest`
-- [ ] 3.2 No `OPENROUTER_MODEL` left outside archives: `grep -rn OPENROUTER_MODEL --exclude-dir=archive --exclude-dir=.venv .` returns only dated historical notes
+- [x] 3.1 Full test suite passes: `uv run pytest`
+- [x] 3.2 No `OPENROUTER_MODEL` left outside archives: `grep -rn OPENROUTER_MODEL --exclude-dir=archive --exclude-dir=.venv .` returns only dated historical notes
 
 #### Manual
 
-- [ ] 3.3 On the page, the drop-down lists the ids in `models.txt` and shows the one in use; choosing another survives a reload and a restart
-- [ ] 3.4 Editing `models.txt` (add a line) shows the new option within one poll, without a restart
-- [ ] 3.5 The drop-down is hidden without an OpenRouter key
+- [x] 3.3 On the page, the drop-down lists the ids in `models.txt` and shows the one in use; choosing another survives a reload and a restart
+- [x] 3.4 Editing `models.txt` (add a line) shows the new option within one poll, without a restart
+- [x] 3.5 The drop-down is hidden without an OpenRouter key
 
 ### Phase 4: Regenerate the current cover
 
