@@ -158,9 +158,9 @@ The page bar shows the same budget-left value, in the same bands and colours as 
 
 #### Automated
 
-- [x] 1.1 The full test suite passes: `uv run pytest`
-- [x] 1.2 The new spend bar tests cover 0.0, 0.5, 0.51, 0.7, 0.71, 0.99, 1.0, 1.4, −0.2 and 0.999, and pass at every supported board size
-- [x] 1.3 No code still references the old constant names
+- [x] 1.1 The full test suite passes: `uv run pytest` — 046b361
+- [x] 1.2 The new spend bar tests cover 0.0, 0.5, 0.51, 0.7, 0.71, 0.99, 1.0, 1.4, −0.2 and 0.999, and pass at every supported board size — 046b361
+- [x] 1.3 No code still references the old constant names — 046b361
 
 #### Manual
 
@@ -171,8 +171,8 @@ The page bar shows the same budget-left value, in the same bands and colours as 
 
 #### Automated
 
-- [ ] 2.1 The full test suite still passes: `uv run pytest`
-- [ ] 2.2 No old threshold names remain in the page
+- [x] 2.1 The full test suite still passes: `uv run pytest`
+- [x] 2.2 No old threshold names remain in the page
 
 #### Manual
 
