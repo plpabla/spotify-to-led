@@ -26,8 +26,8 @@ a reader or a download. The rule:
   show the placeholder.
 - With AI enhancement switched on (FR-019), a cover whose enhanced frame is
   being generated shows its plain frame with the spend bar along its bottom
-  row: today's AI spend as a fraction of the owner's daily limit, as it stood
-  before this generation. Generation takes seconds, far longer than a
+  row: a health bar of how much of the owner's daily limit was left, as it
+  stood before this generation. Generation takes seconds, far longer than a
   changeover should keep the previous item's cover up. It then redraws as
   the enhanced frame, or as the plain one without the bar when the
   generation fails or is paused. A cover's presentation says whether it is

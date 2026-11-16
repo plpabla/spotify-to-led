@@ -271,7 +271,7 @@ RED = frames.SPEND_BAR_RED
         (0.0, 32, GREEN),
         (0.5, 16, GREEN),
         (0.51, 16, AMBER),
-        (0.7, 10, AMBER),
+        (0.69, 10, AMBER),
         (0.71, 10, RED),
         (0.99, 1, RED),
         (1.0, 0, RED),
