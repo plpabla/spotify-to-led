@@ -1,10 +1,10 @@
 ---
 change_id: usage-progress-on-display
 title: Show the AI spend bar as a health bar on the board and status page
-status: impl_reviewed
+status: archived
 created: 2026-11-16
 updated: 2026-11-16
-archived_at: null
+archived_at: 2026-11-16T15:04:25Z
 ---
 
 ## Notes
