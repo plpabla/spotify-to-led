@@ -23,14 +23,16 @@ Four frames, and two overlays, live here:
   clears the note, the triangle and the disc, so it never cuts into a glyph.
 - `with_spend_bar` is drawn over the plain cover while its AI-enhanced
   version (FR-019) is being generated, and is the board's only sign that one
-  is: today's AI spend against the owner's daily limit, as a bar along the
-  bottom pixel row. The whole row is black and its left part filled in
-  proportion to the spend, so an empty bar still reads as a bar. The fill is
-  green, because green already means "on its way" on this board, from the
-  placeholder's triangle, then the stale marker's amber from 75 % and red
-  from 90 %, so a limit about to stop the enhancement shows before it does.
-  It is one board pixel high at every size, and never meets the stale marker
-  at the top.
+  is: how much of the owner's daily AI limit is still left today, as a health
+  bar along the bottom pixel row that drains as the day's spend grows. Its
+  left part is lit in proportion to the budget left and the rest is black, so
+  it is full at no spend, never empty while any budget is left, and empty only
+  at or over the limit. The fill is green while half or more is left, because
+  green already means "on its way" on this board, from the placeholder's
+  triangle, then the stale marker's amber below 50 % left and red below 30 %,
+  so a limit about to stop the enhancement shows before it does. It is one
+  board pixel high at every size, and never meets the stale marker at the
+  top.
 
 The test pattern has four solid quadrants in colours that stay apart on a
 32x32 LED matrix, so a transposed, mirrored or BGR-ordered push looks wrong
@@ -82,13 +84,14 @@ STALE_MARKER_CELLS = 2
 STALE_MARKER_RING_PIXELS = 1
 
 # The spend bar: one board pixel high, not scaled by the design grid, so it
-# takes as little of the cover as the board allows. Filled green below the
-# first threshold, amber below the second, red from there; the fractions are
-# of the owner's daily limit. The green is dimmer than the placeholder's, so
-# the bar hints rather than shouts over the cover.
+# takes as little of the cover as the board allows. It shows the budget left,
+# as a share of the owner's daily limit: green while that share is at least
+# the amber threshold, amber below it, red below the red threshold. The green
+# is dimmer than the placeholder's, so the bar hints rather than shouts over
+# the cover.
 SPEND_BAR_GREEN: tuple[int, int, int] = (0, 160, 0)
-SPEND_BAR_AMBER_FROM = 0.75
-SPEND_BAR_RED_FROM = 0.90
+SPEND_BAR_AMBER_BELOW = 0.50
+SPEND_BAR_RED_BELOW = 0.30
 SPEND_BAR_RED: tuple[int, int, int] = (255, 0, 0)
 
 # The note is designed on the 16x16 grid of the smallest board and scaled up
@@ -196,21 +199,25 @@ def with_stale_marker(frame: Image.Image) -> Image.Image:
 def with_spend_bar(frame: Image.Image, fraction: float) -> Image.Image:
     """Return a copy of `frame` with the spend bar along its bottom pixel row.
 
-    The row is black, and its leftmost `fraction` of pixels, clamped to 0..1
-    and rounded up so any spend at all shows, is filled in the colour for that
-    fraction. `frame` itself is left untouched.
+    `fraction` is today's spend over the daily limit; the bar shows what is
+    left, `1 - fraction` with the fraction clamped to 0..1. The row is black,
+    and its leftmost share of pixels for the budget left, rounded up, is lit
+    in the colour for that share: full and green at no spend, never empty
+    while any budget is left, and empty only at or over the limit. `frame`
+    itself is left untouched.
     """
     width = frame.width
     bottom = frame.height - 1
-    filled = math.ceil(min(max(fraction, 0.0), 1.0) * width)
-    if fraction < SPEND_BAR_AMBER_FROM:
+    left = 1.0 - min(max(fraction, 0.0), 1.0)
+    lit = math.ceil(left * width)
+    if left >= SPEND_BAR_AMBER_BELOW:
         colour = SPEND_BAR_GREEN
-    elif fraction < SPEND_BAR_RED_FROM:
+    elif left >= SPEND_BAR_RED_BELOW:
         colour = STALE_MARKER_COLOUR
     else:
         colour = SPEND_BAR_RED
     barred = frame.copy()
     barred.paste((0, 0, 0), (0, bottom, width, bottom + 1))
-    if filled:
-        barred.paste(colour, (0, bottom, filled, bottom + 1))
+    if lit:
+        barred.paste(colour, (0, bottom, lit, bottom + 1))
     return barred
