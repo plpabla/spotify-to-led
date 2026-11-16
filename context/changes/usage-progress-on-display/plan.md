@@ -164,18 +164,18 @@ The page bar shows the same budget-left value, in the same bands and colours as 
 
 #### Manual
 
-- [ ] 1.4 On the real board, a low-spend generating cover shows a full or nearly full dim green row that does not overpower the cover
-- [ ] 1.5 On the real board, the amber and red bands are distinguishable from green from desk distance
+- [x] 1.4 On the real board, a low-spend generating cover shows a full or nearly full dim green row that does not overpower the cover
+- [x] 1.5 On the real board, the amber and red bands are distinguishable from green from desk distance
 
 ### Phase 2: Status page to match
 
 #### Automated
 
-- [x] 2.1 The full test suite still passes: `uv run pytest`
-- [x] 2.2 No old threshold names remain in the page
+- [x] 2.1 The full test suite still passes: `uv run pytest` — e09799e
+- [x] 2.2 No old threshold names remain in the page — e09799e
 
 #### Manual
 
-- [ ] 2.3 At $0, $0.40, $0.60 and $0.80 of $1.00, the page bar is full green, 60 % green, 40 % amber and 20 % red, with the "Left today" line
-- [ ] 2.4 At or over the limit, the page bar is empty and the line shows $0.00 left
-- [ ] 2.5 During a real generation, the page bar's colour band matches the board's bottom row
+- [x] 2.3 At $0, $0.40, $0.60 and $0.80 of $1.00, the page bar is full green, 60 % green, 40 % amber and 20 % red, with the "Left today" line
+- [x] 2.4 At or over the limit, the page bar is empty and the line shows $0.00 left
+- [x] 2.5 During a real generation, the page bar's colour band matches the board's bottom row
