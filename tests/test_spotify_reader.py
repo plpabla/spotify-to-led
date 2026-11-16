@@ -130,7 +130,15 @@ class FakeSleep:
 
 
 class Harness:
-    def __init__(self, tmp_path: Path, spotify: FakeSpotify, *, ticks: int, token: TokenSet | None) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        spotify: FakeSpotify,
+        *,
+        ticks: int,
+        token: TokenSet | None,
+        idle_interval: float = INTERVAL,
+    ) -> None:
         self.spotify = spotify
         self.clock = FakeClock()
         self.sleep = FakeSleep(self.clock, ticks)
@@ -147,6 +155,7 @@ class Harness:
             settings,
             self.store,
             interval=INTERVAL,
+            idle_interval=idle_interval,
             clock=self.clock,
             sleep=self.sleep,
         )
@@ -486,6 +495,25 @@ async def test_a_paused_item_stays_the_believed_item(tmp_path: Path) -> None:
     snapshot = harness.reader.snapshot
     assert snapshot.status is PlaybackStatus.PAUSED
     assert snapshot.item is not None and snapshot.item.id == "track-1"
+
+
+async def test_reads_slow_down_unless_something_is_playing(tmp_path: Path) -> None:
+    idle = 20.0
+    spotify = FakeSpotify(
+        reads=[
+            httpx2.Response(204),
+            a_track(),
+            timed_out,
+            a_track(is_playing=False),
+            timed_out,
+        ]
+    )
+    harness = Harness(tmp_path, spotify, ticks=5, token=a_token_set(), idle_interval=idle)
+
+    await harness.run()
+
+    # Nothing playing, playing, a failure while playing, paused, a failure while paused.
+    assert harness.sleep.durations == [idle, INTERVAL, INTERVAL, idle, idle]
 
 
 async def test_a_malformed_body_is_an_api_error_without_a_traceback(

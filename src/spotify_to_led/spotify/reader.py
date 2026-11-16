@@ -87,7 +87,8 @@ class SpotifyReader:
         settings: Settings,
         store: TokenStore,
         *,
-        interval: float = 3.0,
+        interval: float = 5.0,
+        idle_interval: float = 20.0,
         clock: Clock = _utc_now,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
@@ -97,7 +98,8 @@ class SpotifyReader:
         self._client_id = settings.spotify_client_id
         self._redirect_uri = settings.spotify_redirect_uri
         self._store = store
-        self._interval = interval
+        self._playing_interval = interval
+        self._idle_interval = idle_interval
         self._clock = clock
         self._sleep = sleep
         self._wake = asyncio.Event()
@@ -157,6 +159,17 @@ class SpotifyReader:
                 self._fail(ReadFailure.API_ERROR)
                 wait = self._interval
             await self._pause(wait)
+
+    @property
+    def _interval(self) -> float:
+        """The pause before the next read: short while playing, long otherwise.
+
+        Polling every few seconds around the clock got the app rate-limited
+        for hours; nothing changes fast while paused or stopped.
+        """
+        if self._state.status is PlaybackStatus.PLAYING:
+            return self._playing_interval
+        return self._idle_interval
 
     async def _tick(self) -> float | None:
         """One read attempt; returns how long to wait, or `None` to wait for a wake."""

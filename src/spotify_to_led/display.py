@@ -99,8 +99,8 @@ logger = logging.getLogger(__name__)
 # so tests can shorten them.
 CONNECT_RETRY_INITIAL_SECONDS = 5.0
 CONNECT_RETRY_MAX_SECONDS = 60.0
-# The reader polls every 3 s, so sampling every second puts a change on the
-# board within about 4 s of Spotify reporting it.
+# The reader polls every 5 s while playing, so sampling every second puts a
+# change on the board within about 6 s of Spotify reporting it.
 SAMPLE_INTERVAL_SECONDS = 1.0
 # FR-018's grace: a blip of failed reads leaves the board unmarked, whatever
 # the service has not been able to vouch for in longer than this is marked.
