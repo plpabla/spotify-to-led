@@ -82,7 +82,7 @@ DRAWN: dict[str, Image.Image] = {
     "cover b": COVER_B,
     "stale cover a": frames.with_stale_marker(COVER_A),
     # The generating cover is told from the plain one by its spend bar, drawn
-    # here at nothing spent: a black bottom row.
+    # here at nothing spent: a full green bottom row.
     "generating cover a": frames.with_spend_bar(COVER_A, NO_SPEND),
     "stale generating cover a": frames.with_stale_marker(frames.with_spend_bar(COVER_A, NO_SPEND)),
     "enhanced cover a": ENHANCED_A,

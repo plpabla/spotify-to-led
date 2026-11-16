@@ -1211,7 +1211,7 @@ def test_the_status_page_saves_the_limit_through_put_settings(
     with TestClient(main.app) as client:
         page = client.get("/").text
 
-    assert 'id="enhance-limit" min="0.001" step="0.001"' in page
+    assert 'id="enhance-limit" min="0.01" step="0.01"' in page
     # The checkbox's call, the limit's and the model's, each a PUT to /settings.
     assert page.count('fetch("/settings"') == 3
     assert page.count('method: "PUT"') == 3

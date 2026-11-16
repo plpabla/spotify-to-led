@@ -266,43 +266,43 @@ RED = frames.SPEND_BAR_RED
 
 
 @pytest.mark.parametrize(
-    ("fraction", "filled_of_32", "colour"),
+    ("fraction", "lit_of_32", "colour"),
     [
-        (0.0, 0, GREEN),
+        (0.0, 32, GREEN),
         (0.5, 16, GREEN),
-        (0.74, 24, GREEN),
-        (0.75, 24, AMBER),
-        (0.89, 29, AMBER),
-        (0.90, 29, RED),
-        (1.0, 32, RED),
-        (1.4, 32, RED),
+        (0.51, 16, AMBER),
+        (0.69, 10, AMBER),
+        (0.71, 10, RED),
+        (0.99, 1, RED),
+        (1.0, 0, RED),
+        (1.4, 0, RED),
     ],
 )
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_spend_bar_fills_the_bottom_row_in_proportion_and_leaves_the_rest_black(
-    size: int, fraction: float, filled_of_32: int, colour: tuple[int, int, int]
+def test_spend_bar_lights_the_budget_left_and_leaves_the_rest_black(
+    size: int, fraction: float, lit_of_32: int, colour: tuple[int, int, int]
 ) -> None:
     barred = frames.with_spend_bar(_busy_frame(size), fraction)
-    filled = math.ceil(min(fraction, 1.0) * size)
+    lit = math.ceil((1.0 - min(fraction, 1.0)) * size)
 
     validate_frame(barred, size)
     if size == 32:
-        assert filled == filled_of_32
-    assert _bottom_row(barred) == [colour] * filled + [BLACK] * (size - filled)
+        assert lit == lit_of_32
+    assert _bottom_row(barred) == [colour] * lit + [BLACK] * (size - lit)
 
 
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_spend_bar_rounds_any_spend_up_to_a_lit_pixel(size: int) -> None:
-    barred = frames.with_spend_bar(_busy_frame(size), 0.001)
+def test_spend_bar_keeps_a_lit_pixel_while_any_budget_is_left(size: int) -> None:
+    barred = frames.with_spend_bar(_busy_frame(size), 0.999)
 
-    assert _bottom_row(barred) == [GREEN] + [BLACK] * (size - 1)
+    assert _bottom_row(barred) == [RED] + [BLACK] * (size - 1)
 
 
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
-def test_spend_bar_below_zero_is_an_empty_black_row(size: int) -> None:
+def test_spend_bar_below_zero_is_a_full_green_row(size: int) -> None:
     barred = frames.with_spend_bar(_busy_frame(size), -0.2)
 
-    assert _bottom_row(barred) == [BLACK] * size
+    assert _bottom_row(barred) == [GREEN] * size
 
 
 @pytest.mark.parametrize("fraction", [0.0, 0.5, 1.0])
@@ -335,9 +335,9 @@ def test_spend_bar_does_not_mutate_its_input(size: int) -> None:
 @pytest.mark.parametrize("size", SUPPORTED_BOARD_SIZES)
 def test_spend_bar_and_stale_marker_do_not_cover_each_other(size: int) -> None:
     block, block_ring = _marker_regions(size)
-    both = frames.with_stale_marker(frames.with_spend_bar(_busy_frame(size), 1.0))
+    both = frames.with_stale_marker(frames.with_spend_bar(_busy_frame(size), 0.0))
 
-    assert _bottom_row(both) == [RED] * size
+    assert _bottom_row(both) == [GREEN] * size
     assert all(both.getpixel(point) == AMBER for point in block)
     assert all(both.getpixel(point) == BLACK for point in block_ring)
 
