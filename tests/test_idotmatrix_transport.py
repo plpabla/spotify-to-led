@@ -9,10 +9,12 @@ import asyncio
 import logging
 
 import pytest
+from idotmatrix.connection_manager import UploadError
 
+from spotify_to_led import frames
 from spotify_to_led.board import idotmatrix_transport
 from spotify_to_led.board.idotmatrix_transport import IDotMatrixBoardTransport
-from spotify_to_led.board.transport import LinkState
+from spotify_to_led.board.transport import BoardRejectedUpload, LinkState
 
 
 class HangingClient:
@@ -220,3 +222,135 @@ async def test_each_time_the_link_comes_up_is_counted_once() -> None:
 
     assert transport.connections == 2
     assert transport.link_state is LinkState.UP
+
+
+class RaisingImage:
+    """An image module whose upload raises `error`."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def show_image_pixeldata(self, pixels: object) -> None:
+        raise self.error
+
+
+class UploadClient:
+    def __init__(self, error: Exception) -> None:
+        self.image = RaisingImage(error)
+
+
+async def test_a_refused_upload_becomes_board_rejected_upload() -> None:
+    # The message is the 0.3.0 library's; a refusal is the board answering no.
+    transport = make_transport()
+    refusal = UploadError("the device rejected the upload (notification 0500010003)")
+    transport._client = UploadClient(refusal)  # type: ignore[assignment]
+
+    with pytest.raises(BoardRejectedUpload) as caught:
+        await transport.push_frame(frames.test_pattern(32))
+
+    assert caught.value.__cause__ is refusal
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        UploadError("the device did not acknowledge the upload within 5 seconds"),
+        OSError("link lost"),
+    ],
+)
+async def test_an_upload_that_was_not_refused_passes_through_unchanged(
+    error: Exception,
+) -> None:
+    # A board that never answered, or a link that failed, is not a refusal.
+    transport = make_transport()
+    transport._client = UploadClient(error)  # type: ignore[assignment]
+
+    with pytest.raises(type(error)) as caught:
+        await transport.push_frame(frames.test_pattern(32))
+
+    assert caught.value is error
+
+
+class ResetCalls:
+    """Records the order `clear` and `reset` are awaited in."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+
+class FakeMaterials:
+    def __init__(self, record: ResetCalls, behaviour: str) -> None:
+        self.record = record
+        self.behaviour = behaviour
+
+    async def clear(self) -> None:
+        self.record.calls.append("clear")
+        if self.behaviour == "raise":
+            raise UploadError("the device rejected the upload (notification 05)")
+        if self.behaviour == "hang":
+            await asyncio.Event().wait()
+
+
+class ResetClient:
+    def __init__(
+        self, *, clear: str = "ok", reset_error: Exception | None = None
+    ) -> None:
+        self.record = ResetCalls()
+        self.materials = FakeMaterials(self.record, clear)
+        self.reset_error = reset_error
+
+    async def reset(self) -> None:
+        self.record.calls.append("reset")
+        if self.reset_error is not None:
+            raise self.reset_error
+
+
+async def test_reset_clears_the_materials_then_resets_the_board() -> None:
+    transport = make_transport()
+    client = ResetClient()
+    transport._client = client  # type: ignore[assignment]
+
+    await transport.reset()
+
+    assert client.record.calls == ["clear", "reset"]
+
+
+async def test_reset_still_resets_when_clearing_the_materials_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    transport = make_transport()
+    client = ResetClient(clear="raise")
+    transport._client = client  # type: ignore[assignment]
+
+    with caplog.at_level(logging.WARNING):
+        await transport.reset()
+
+    assert client.record.calls == ["clear", "reset"]
+    assert "clearing the board's stored materials failed" in caplog.text
+
+
+async def test_reset_still_resets_when_clearing_the_materials_never_returns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(idotmatrix_transport, "RESET_STEP_TIMEOUT_SECONDS", 0.05)
+    transport = make_transport()
+    client = ResetClient(clear="hang")
+    transport._client = client  # type: ignore[assignment]
+
+    with caplog.at_level(logging.WARNING):
+        async with asyncio.timeout(2):
+            await transport.reset()
+
+    assert client.record.calls == ["clear", "reset"]
+    assert "clearing the board's stored materials failed" in caplog.text
+
+
+async def test_a_failed_board_reset_reaches_the_caller() -> None:
+    transport = make_transport()
+    client = ResetClient(reset_error=OSError("link lost"))
+    transport._client = client  # type: ignore[assignment]
+
+    with pytest.raises(OSError, match="link lost"):
+        await transport.reset()
+
+    assert client.record.calls == ["clear", "reset"]

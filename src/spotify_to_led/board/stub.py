@@ -5,12 +5,15 @@ transport itself. The application points it at `var/frames`, which is already
 gitignored.
 """
 
+import logging
 import os
 from pathlib import Path
 
 from PIL import Image
 
 from spotify_to_led.board.transport import LinkState, validate_frame
+
+logger = logging.getLogger(__name__)
 
 FRAME_FILENAME = "latest.png"
 TEMP_FILENAME = ".latest.png.tmp"
@@ -47,6 +50,11 @@ class PngBoardTransport:
         temp_path = self._output_dir / TEMP_FILENAME
         frame.save(temp_path, format="PNG")
         os.replace(temp_path, self._output_dir / FRAME_FILENAME)
+
+    async def reset(self) -> None:
+        # A PNG has no stored materials to clear and nothing to reset; the
+        # last frame stays where the viewer can see it.
+        logger.info("stub board reset requested; nothing to do")
 
     async def close(self) -> None:
         self._link_state = LinkState.DOWN

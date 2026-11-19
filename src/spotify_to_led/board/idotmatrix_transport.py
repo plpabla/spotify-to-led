@@ -21,10 +21,11 @@ import asyncio
 import logging
 
 from idotmatrix import IDotMatrixClient, ScreenSize
-from idotmatrix.connection_manager import ConnectionListener
+from idotmatrix.connection_manager import ConnectionListener, UploadError
 from PIL import Image
 
 from spotify_to_led.board.transport import (
+    BoardRejectedUpload,
     LinkState,
     frame_to_pixel_colors,
     validate_frame,
@@ -36,6 +37,18 @@ logger = logging.getLogger(__name__)
 # `disconnect` can wait behind an in-flight connect attempt for
 # about 30 s, and pm2 would SIGKILL the process before uvicorn finished.
 DISCONNECT_TIMEOUT_SECONDS = 5.0
+
+# How long each step of `reset` may take. Both are single acknowledged
+# commands, so a board that is answering at all finishes well inside this;
+# the bound only keeps a silent board from holding the caller forever.
+RESET_STEP_TIMEOUT_SECONDS = 10.0
+
+# The library raises the same `UploadError` for a board that refused an
+# upload and for one that never acknowledged it; only the message tells them
+# apart. Like `_discard_stale_link`, this leans on the library's internals as
+# they are in 0.3.0, the exact version pinned, and a version bump must
+# re-check it.
+_REJECTION_MESSAGE = "rejected the upload"
 
 
 class IDotMatrixBoardTransport:
@@ -126,7 +139,30 @@ class IDotMatrixBoardTransport:
 
     async def push_frame(self, frame: Image.Image) -> None:
         validate_frame(frame, self._size)
-        await self._client.image.show_image_pixeldata(frame_to_pixel_colors(frame))
+        try:
+            await self._client.image.show_image_pixeldata(frame_to_pixel_colors(frame))
+        except UploadError as error:
+            # Only a refusal is translated; a missing acknowledgement is the
+            # board not answering, and passes through as the library raised it.
+            if _REJECTION_MESSAGE in str(error):
+                raise BoardRejectedUpload(str(error)) from error
+            raise
+
+    async def reset(self) -> None:
+        # Clearing the stored materials is best effort: a board that will not
+        # clear them may still take the reset, and the reset is the part the
+        # caller needs to hear about. Each step is bounded, so a silent board
+        # cannot hold the caller.
+        try:
+            async with asyncio.timeout(RESET_STEP_TIMEOUT_SECONDS):
+                await self._client.materials.clear()
+        except Exception:
+            logger.warning(
+                "clearing the board's stored materials failed; resetting anyway",
+                exc_info=True,
+            )
+        async with asyncio.timeout(RESET_STEP_TIMEOUT_SECONDS):
+            await self._client.reset()
 
     async def close(self) -> None:
         # `disconnect` is safe when there was never a connection, so this
