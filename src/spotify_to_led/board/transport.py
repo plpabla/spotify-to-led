@@ -17,6 +17,16 @@ class LinkState(StrEnum):
     DOWN = "down"
 
 
+class BoardRejectedUpload(Exception):
+    """The board answered a frame upload by refusing it.
+
+    This is distinct from the board not answering at all and from the link
+    failing, which surface as whatever the implementation's library raises.
+    A refusal means the board is reachable but will not take the frame, so
+    the display loop can react to it without importing any board library.
+    """
+
+
 class BoardTransport(Protocol):
     """A board the service can push frames to.
 
@@ -27,6 +37,11 @@ class BoardTransport(Protocol):
     `connections` counts how many times the link has come up, including
     reconnects the implementation makes on its own. A board that loses power
     forgets its frame, so a new count is the signal to draw again.
+
+    `push_frame` raises `BoardRejectedUpload` when the board refuses the
+    frame. `reset` clears whatever the board has stored and then resets it;
+    it may raise, but must leave the transport usable, so a later `connect`
+    or `push_frame` works as before.
     """
 
     @property
@@ -38,6 +53,8 @@ class BoardTransport(Protocol):
     async def connect(self) -> None: ...
 
     async def push_frame(self, frame: Image.Image) -> None: ...
+
+    async def reset(self) -> None: ...
 
     async def close(self) -> None: ...
 

@@ -363,8 +363,15 @@ def test_without_a_client_id_the_app_serves_and_the_spotify_routes_say_so(
     assert body["playback"] is None
     assert body["authorization"] is None
     # The board is reported whether or not Spotify is configured.
-    assert set(body["board"]) == {"link", "task_running", "presentation", "push_failed"}
+    assert set(body["board"]) == {
+        "link",
+        "task_running",
+        "presentation",
+        "push_failed",
+        "last_reset_at",
+    }
     assert body["board"]["task_running"] is True
+    assert body["board"]["last_reset_at"] is None
     assert body["stale_after_seconds"] == display.STALE_AFTER_SECONDS
     assert body["now"] is not None
 
@@ -1493,6 +1500,131 @@ def test_status_reports_whether_the_cover_last_sent_was_enhanced_or_generating(
         "enhanced": enhanced,
         "generating": generating,
     }
+
+
+def test_status_reports_when_the_board_was_last_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+    reset_at = datetime(2026, 11, 19, 8, 30, tzinfo=UTC)
+
+    with TestClient(main.app) as client:
+        # Its own status object: the running loop keeps writing to the real one.
+        main.app.state.display_status = display.DisplayStatus(last_reset_at=reset_at)
+        board = client.get("/status").json()["board"]
+
+    assert datetime.fromisoformat(board["last_reset_at"]) == reset_at
+
+
+# `POST /board/reset`. The display loop is replaced by one that only connects
+# (or not) and then waits, so nothing but the route touches the flag.
+
+
+def use_board_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, connect: bool = True, end: bool = False
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    async def idle_display(board: CountingTransport, *args: object, **kwargs: object) -> None:
+        if connect:
+            await board.connect()
+        if not end:
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(main, "run_display", idle_display)
+
+
+def test_board_reset_asks_the_display_loop_for_a_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_board_reset(monkeypatch, tmp_path)
+
+    with TestClient(main.app) as client:
+        wait_for(lambda: main.app.state.transport.link_state is LinkState.UP)
+        response = client.post("/board/reset", json={})
+        requested = main.app.state.display_status.reset_requested
+
+    assert (response.status_code, response.json()) == (202, {"reset_requested": True})
+    assert requested is True
+
+
+def test_board_reset_is_a_409_while_a_reset_is_pending(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_board_reset(monkeypatch, tmp_path)
+
+    with TestClient(main.app) as client:
+        wait_for(lambda: main.app.state.transport.link_state is LinkState.UP)
+        assert client.post("/board/reset", json={}).status_code == 202
+        response = client.post("/board/reset", json={})
+        requested = main.app.state.display_status.reset_requested
+
+    assert response.status_code == 409
+    assert response.text == "A reset is already pending."
+    assert requested is True
+
+
+@pytest.mark.parametrize(
+    ("connect", "end"),
+    [(False, False), (True, True)],
+    ids=["link down", "task ended"],
+)
+def test_board_reset_is_a_409_while_the_link_is_down(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, connect: bool, end: bool
+) -> None:
+    # An ended task leaves the transport believing the link is up, but
+    # nothing is left to act on the flag.
+    use_board_reset(monkeypatch, tmp_path, connect=connect, end=end)
+
+    with TestClient(main.app) as client:
+        if end:
+            wait_for(main.app.state.display_task.done)
+        response = client.post("/board/reset", json={})
+        requested = main.app.state.display_status.reset_requested
+
+    assert response.status_code == 409
+    assert response.text == "The board link is down."
+    assert requested is False
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body"),
+    [
+        ("text/plain", "{}"),
+        ("application/x-www-form-urlencoded", ""),
+        (None, "{}"),
+        ("application/json", '{"now": true}'),
+        ("application/json", "[]"),
+    ],
+    ids=["text", "form", "no type", "non-empty object", "not an object"],
+)
+def test_board_reset_refuses_anything_but_an_empty_json_object(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content_type: str | None, body: str
+) -> None:
+    use_board_reset(monkeypatch, tmp_path)
+    headers = {"content-type": content_type} if content_type is not None else {}
+
+    with TestClient(main.app) as client:
+        wait_for(lambda: main.app.state.transport.link_state is LinkState.UP)
+        response = client.post("/board/reset", content=body.encode(), headers=headers)
+        requested = main.app.state.display_status.reset_requested
+
+    assert response.status_code == 422
+    assert requested is False
+
+
+def test_the_status_page_resets_the_board_through_post_board_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_transport(monkeypatch, CountingTransport(), tmp_path)
+
+    with TestClient(main.app) as client:
+        page = client.get("/").text
+
+    assert 'id="board-reset"' in page
+    assert ">Reset board</button>" in page
+    assert 'fetch("/board/reset"' in page
+    assert "Board reset at " in page
 
 
 # `POST /regenerate`, against the lifespan's own loader and enhancer, whose

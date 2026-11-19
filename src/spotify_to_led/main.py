@@ -46,6 +46,13 @@ like `PUT /settings` it takes only a JSON body, and it starts nothing while
 enhancement is off, paused or over today's limit, or no finished cover is on
 show.
 
+A board that keeps refusing uploads is reset by the display task itself, at
+most once an hour, and `/status` reports when it last was. `POST /board/reset`
+lets the owner ask for one now: it only raises a flag the display task acts
+on at its next sample, so the task stays the one thing that talks to the
+board. Like `POST /regenerate` it takes only a JSON body, and it refuses
+while the link is down or a reset is already waiting.
+
 Spotify is optional. Without a client ID no reader runs, the display shows
 idle, and the Spotify routes say so instead of failing, so the laptop and the
 test suite start the same app the Pi does.
@@ -516,6 +523,41 @@ async def regenerate(request: Request, body: RegenerateRequest) -> dict[str, boo
     return {"regenerating": True}
 
 
+class BoardResetRequest(BaseModel):
+    """The body of `POST /board/reset`: an empty JSON object.
+
+    It carries nothing; requiring it is what makes the route JSON-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@app.post("/board/reset", status_code=202, response_model=None)
+async def reset_board(request: Request, body: BoardResetRequest) -> dict[str, bool] | Response:
+    """Ask the display task to reset the board at its next sample.
+
+    The route never talks to the board: the display task is its one writer,
+    so this only sets the flag on `DisplayStatus` that the task clears once
+    the reset is carried out, ignoring the hourly cooldown that holds back
+    its own resets. A reset clears the board's storage and restarts it, so
+    like `POST /regenerate` only an `application/json` body is accepted,
+    which a cross-site form or `text/plain` post cannot send without a CORS
+    preflight; anything else is a 422 before this runs. Every refusal is a
+    409 with nothing requested.
+    """
+    task: asyncio.Task[None] = request.app.state.display_task
+    transport: BoardTransport = request.app.state.transport
+    display_status: DisplayStatus = request.app.state.display_status
+    # With the task ended nothing would act on the flag, and with the link
+    # down the task is busy reconnecting, which a reset could not help.
+    if task.done() or transport.link_state is LinkState.DOWN:
+        return PlainTextResponse("The board link is down.", status_code=409)
+    if display_status.reset_requested:
+        return PlainTextResponse("A reset is already pending.", status_code=409)
+    display_status.reset_requested = True
+    return {"reset_requested": True}
+
+
 def _enhancement_json(request: Request, snapshot: PlaybackSnapshot | None) -> dict[str, Any]:
     available: bool = request.app.state.enhance_available
     saved: OwnerSettings = request.app.state.owner_settings
@@ -654,6 +696,7 @@ def _board_json(
             else None
         ),
         "push_failed": display.push_failed,
+        "last_reset_at": display.last_reset_at,
     }
 
 

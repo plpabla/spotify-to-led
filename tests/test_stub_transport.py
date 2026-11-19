@@ -114,3 +114,16 @@ async def test_close_after_a_failed_connect_does_not_raise(tmp_path: Path) -> No
     await transport.close()
 
     assert transport.link_state is LinkState.DOWN
+
+
+async def test_reset_leaves_the_last_frame_alone(tmp_path: Path) -> None:
+    transport = PngBoardTransport(tmp_path, SIZE)
+    await transport.connect()
+    await transport.push_frame(Image.new("RGB", (SIZE, SIZE), (7, 8, 9)))
+
+    await transport.reset()
+
+    assert transport.link_state is LinkState.UP
+    assert [path.name for path in tmp_path.iterdir()] == ["latest.png"]
+    with Image.open(tmp_path / "latest.png") as image:
+        assert image.getpixel((0, 0)) == (7, 8, 9)
