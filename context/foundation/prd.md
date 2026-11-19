@@ -222,6 +222,7 @@ Each FR carries a `> Socratic:` blockquote recording the counter-argument consid
 - FR-013: Service can re-establish the Bluetooth link after a drop with no human action. Priority: must-have
 
   > Socratic: Counter-arguments considered: unbounded recovery is untestable (no limit on duration or attempts, no defined display meanwhile); and recovery is sometimes impossible when the board is off or out of range. Resolution: stands as written.
+  > Updated 2026-11-19 (clear-storage): a board can stay connected yet refuse every upload; on 2026-11-18 one did for over a day. The service now resets a board that rejects 3 uploads in a row, clearing its storage and then sending RESET, at most once an hour, and retries the push straight after. Clearing storage alone did not fix the 2026-11-18 incident; the reset did. The owner can also ask for a reset from the web page while the link is up, which the service carries out at its next sample regardless of the hourly limit, and the page shows when the board was last reset (`last_reset_at` in `/status`).
 
 ### Operation
 

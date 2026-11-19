@@ -273,16 +273,16 @@ None. `last_reset_at` is additive in `/status`; no persisted state changes.
 
 #### Automated
 
-- [x] 2.1 Display tests pass: `uv run pytest tests/test_display.py`
-- [x] 2.2 Full suite passes: `uv run pytest`
+- [x] 2.1 Display tests pass: `uv run pytest tests/test_display.py` — 3c50be1
+- [x] 2.2 Full suite passes: `uv run pytest` — 3c50be1
 
 ### Phase 3: Status, manual trigger and docs
 
 #### Automated
 
-- [ ] 3.1 App tests pass: `uv run pytest tests/test_app.py`
-- [ ] 3.2 Full suite passes: `uv run pytest`
-- [ ] 3.3 The script is gone: `test ! -e scripts/clear_board.py`
+- [x] 3.1 App tests pass: `uv run pytest tests/test_app.py`
+- [x] 3.2 Full suite passes: `uv run pytest`
+- [x] 3.3 The script is gone: `test ! -e scripts/clear_board.py`
 
 #### Manual
 

@@ -36,7 +36,7 @@
 <div id="sections">
   <section id="playback"><h2>Playback</h2><p class="muted">Loading...</p></section>
   <section id="reading"><h2>Reading Spotify</h2></section>
-  <section id="board"><h2>Board</h2></section>
+  <section id="board"><h2>Board</h2><div id="board-lines"></div><p><button type="button" id="board-reset" class="action" disabled>Reset board</button></p><p id="board-note" class="muted"></p></section>
   <section id="enhancement"><h2>AI-enhanced covers</h2><p><label><input type="checkbox" id="enhance-toggle" disabled> Enhance covers with AI</label></p><p id="enhance-cover"></p><div id="enhance-spend" hidden><p id="enhance-spend-line"></p><div class="bar"><div id="enhance-spend-fill"></div></div></div><form id="enhance-limit-form" class="limit" hidden><label for="enhance-limit">Daily limit</label><span class="money"><span class="muted">$</span><input type="number" id="enhance-limit" min="0.01" step="0.01" required></span><button type="submit" id="enhance-limit-save" class="action">Save</button></form><p id="enhance-model-row" class="limit" hidden><label for="enhance-model">Model</label><select id="enhance-model"></select></p><p id="enhance-regenerate-row" hidden><button type="button" id="enhance-regenerate" class="action" disabled>Regenerate cover</button></p><p id="enhance-note" class="muted"></p></section>
   <section id="authorization" hidden><h2>Spotify authorization</h2></section>
 </div>
@@ -150,8 +150,43 @@ function renderBoard(data) {
       + (presentation.stale ? ", marked stale." : ", not marked.")));
     if (board.push_failed) parts.push(el("p", "That push failed; it is being retried.", "bad"));
   }
-  fill("board", "Board", ...parts);
+  if (board.last_reset_at) parts.push(el("p", "Board reset at " + when(board.last_reset_at) + ".", "muted"));
+  // The lines only: the button and its note are kept, so a click is never
+  // lost to a poll.
+  document.getElementById("board-lines").replaceChildren(...parts);
+  if (!boardResetting) document.getElementById("board-reset").disabled = board.link !== "up";
 }
+
+// Whether a reset request is in flight, so a second click cannot send another.
+let boardResetting = false;
+
+document.getElementById("board-reset").addEventListener("click", async (event) => {
+  const button = event.target;
+  const note = document.getElementById("board-note");
+  boardResetting = true;
+  button.disabled = true;
+  note.textContent = "";
+  note.className = "muted";
+  try {
+    const response = await fetch("/board/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    // The service says why it refused, in plain text; a reset carried out
+    // shows as the "Board reset at" line.
+    if (!response.ok) {
+      note.textContent = (await response.text()) || "The board could not be reset.";
+      note.className = "bad";
+    }
+  } catch (error) {
+    note.textContent = "The board could not be reset.";
+    note.className = "bad";
+  } finally {
+    // The next poll enables the button again while the link is up.
+    boardResetting = false;
+  }
+});
 
 // The checkbox is kept, not rebuilt, so a click is never lost to a poll. A
 // poll that began before the latest change may carry the old value, so it
