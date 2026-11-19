@@ -348,7 +348,6 @@ async def run_display(
                 # Recorded before the reset, so one that fails still starts
                 # the cooldown rather than being tried again every sample.
                 status.last_reset_at = clock()
-                status.reset_requested = False
                 rejections = 0
                 try:
                     await transport.reset()
@@ -356,7 +355,11 @@ async def run_display(
                     logger.warning(
                         "resetting the board failed (%s: %s)", type(error).__name__, error
                     )
-                reset_unconfirmed = True
+                else:
+                    reset_unconfirmed = True
+                # Cleared only now, so a request made while the reset was in
+                # flight is refused as already pending rather than queued.
+                status.reset_requested = False
                 # The board is blank now, so the frame is due again in this
                 # sample, as a retry from the start of its backoff; before the
                 # first push the first push is due anyway.

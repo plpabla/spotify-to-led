@@ -936,6 +936,44 @@ async def test_a_reset_that_raises_is_logged_and_the_loop_keeps_going(
     assert not any(r.levelno >= logging.ERROR for r in caplog.records)
 
 
+async def test_a_push_landing_after_a_failed_reset_does_not_claim_the_reset_worked(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    board = FakeBoard(rejecting_pushes=3, failing_resets=1)
+    status = DisplayStatus()
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
+        await run_with_status(board, scripted(*[NOTHING] * 6), FakeSleep(sleeps=6), status)
+
+    assert board.resets == 1
+    assert "accepted a frame again after the reset" not in caplog.text
+
+
+class InFlightResetBoard(FakeBoard):
+    """A board whose reset takes a while, during which the owner asks again."""
+
+    def __init__(self, status: DisplayStatus) -> None:
+        super().__init__()
+        self.status = status
+        self.pending_during_reset: list[bool] = []
+
+    async def reset(self) -> None:
+        await super().reset()
+        # What the route sees while the reset is still running.
+        self.pending_during_reset.append(self.status.reset_requested)
+
+
+async def test_a_reset_in_flight_still_counts_as_pending() -> None:
+    status = DisplayStatus(reset_requested=True)
+    board = InFlightResetBoard(status)
+
+    await run_with_status(board, scripted(*[NOTHING] * 3), FakeSleep(sleeps=3), status)
+
+    assert board.resets == 1
+    assert board.pending_during_reset == [True]
+    assert status.reset_requested is False
+
+
 # --- the loop: covers -----------------------------------------------------
 
 

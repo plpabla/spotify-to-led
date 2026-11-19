@@ -291,6 +291,16 @@ class FakeMaterials:
             await asyncio.Event().wait()
 
 
+class DroppedManager:
+    """The private manager `_discard_stale_link` reads, for a link that is down."""
+
+    def __init__(self) -> None:
+        self._transport: object | None = object()
+
+    def is_connected(self) -> bool:
+        return False
+
+
 class ResetClient:
     def __init__(
         self, *, clear: str = "ok", reset_error: Exception | None = None
@@ -298,6 +308,7 @@ class ResetClient:
         self.record = ResetCalls()
         self.materials = FakeMaterials(self.record, clear)
         self.reset_error = reset_error
+        self._connection_manager = DroppedManager()
 
     async def reset(self) -> None:
         self.record.calls.append("reset")
@@ -354,3 +365,5 @@ async def test_a_failed_board_reset_reaches_the_caller() -> None:
         await transport.reset()
 
     assert client.record.calls == ["clear", "reset"]
+    # As after a failed connect, the next connect scans afresh.
+    assert client._connection_manager._transport is None

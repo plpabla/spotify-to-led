@@ -161,8 +161,14 @@ class IDotMatrixBoardTransport:
                 "clearing the board's stored materials failed; resetting anyway",
                 exc_info=True,
             )
-        async with asyncio.timeout(RESET_STEP_TIMEOUT_SECONDS):
-            await self._client.reset()
+        try:
+            async with asyncio.timeout(RESET_STEP_TIMEOUT_SECONDS):
+                await self._client.reset()
+        except Exception:
+            # As for a failed connect: a send may have been cut off mid-connect,
+            # so the next connect must scan afresh rather than reuse the client.
+            self._discard_stale_link()
+            raise
 
     async def close(self) -> None:
         # `disconnect` is safe when there was never a connection, so this
