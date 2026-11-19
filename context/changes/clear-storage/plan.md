@@ -280,11 +280,11 @@ None. `last_reset_at` is additive in `/status`; no persisted state changes.
 
 #### Automated
 
-- [x] 3.1 App tests pass: `uv run pytest tests/test_app.py`
-- [x] 3.2 Full suite passes: `uv run pytest`
-- [x] 3.3 The script is gone: `test ! -e scripts/clear_board.py`
+- [x] 3.1 App tests pass: `uv run pytest tests/test_app.py` — c755b99
+- [x] 3.2 Full suite passes: `uv run pytest` — c755b99
+- [x] 3.3 The script is gone: `test ! -e scripts/clear_board.py` — c755b99
 
 #### Manual
 
-- [ ] 3.4 After deploying to the Pi (`PI_HOST=pi scripts/deploy.sh`), pressing "Reset board" on the status page logs the manual reset WARNING in `pm2 logs spotify-to-led`, the board shows the current cover again within about a minute, and the page shows "Board reset at …".
-- [ ] 3.5 The status page shows no reset line on a fresh start and the button is disabled while the link is down.
+- [x] 3.4 After deploying to the Pi (`PI_HOST=pi scripts/deploy.sh`), pressing "Reset board" on the status page logs the manual reset WARNING in `pm2 logs spotify-to-led`, the board shows the current cover again within about a minute, and the page shows "Board reset at …". — c755b99
+- [x] 3.5 The status page shows no reset line on a fresh start and the button is disabled while the link is down. — c755b99
