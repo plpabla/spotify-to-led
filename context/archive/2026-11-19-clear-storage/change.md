@@ -1,10 +1,10 @@
 ---
 change_id: clear-storage
 title: Reset the board automatically when it keeps rejecting image uploads
-status: impl_reviewed
+status: archived
 created: 2026-11-19
 updated: 2026-11-19
-archived_at: null
+archived_at: 2026-11-19T11:08:08Z
 ---
 
 ## Notes
