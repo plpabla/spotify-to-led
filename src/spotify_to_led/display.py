@@ -67,11 +67,26 @@ doubling to 60 s, restarted for each new presentation. Once the board can show
 a stale marker, a push that failed silently would leave an unmarked cover up
 for the whole outage, which the hard rules forbid.
 
+A board can get stuck answering every upload by refusing it, with the link
+still up, and neither retrying nor reconnecting gets it out of that (seen on
+2026-11-18; only the board's reset command did). The loop counts refused uploads in
+a row, across presentation changes and reconnects; a push that lands starts
+the count over, and a push that fails any other way leaves it as it is. After
+`RESETS_AFTER_REJECTIONS` refusals the board is reset, at most once every
+`RESET_COOLDOWN_SECONDS`, so a board that a reset does not help is not reset
+over and over; between resets the push keeps its usual backoff. The owner can
+also ask for a reset from the status page, which the next sample carries out
+whatever the count and the cooldown, and which starts the cooldown too. A
+reset happens inside a sample, before the push is decided, so only this loop
+ever talks to the board; the frame is pushed again in the same sample, since
+a reset leaves the board blank.
+
 The log lines are the evidence that the board recovers unattended, so they
 have to stay readable in `pm2 logs`: INFO when the link is lost, one WARNING
 per failed connect, with a traceback only on the first of each outage, INFO
 on connect, and INFO on each presentation change, naming the cover's URL and
-whether it is enhanced, generating or stale. Each attempt also gets the library's own INFO
+whether it is enhanced, generating or stale. A reset logs a WARNING saying
+why, and the first push to land after it an INFO. Each attempt also gets the library's own INFO
 "connecting to" line, and a scan for an absent board takes about 30 s, so at
 the 60 s ceiling a board that is off all day costs about 2,000 lines, whether
 it was off from boot or switched off later.
@@ -87,7 +102,7 @@ from enum import StrEnum
 from PIL import Image
 
 from spotify_to_led import frames
-from spotify_to_led.board.transport import BoardTransport, LinkState
+from spotify_to_led.board.transport import BoardRejectedUpload, BoardTransport, LinkState
 from spotify_to_led.covers import CoverLoader, CoverState, CoverStatus, select_artwork
 from spotify_to_led.owner_settings import OwnerSettings
 from spotify_to_led.spotify.playback import PlaybackSnapshot, PlaybackStatus
@@ -109,6 +124,10 @@ STALE_AFTER_SECONDS = 30
 # sample, then doubling to 60 s. Restarted for each new presentation.
 PUSH_RETRY_INITIAL_SECONDS = 1.0
 PUSH_RETRY_MAX_SECONDS = 60.0
+# A board refusing this many uploads in a row is reset, but automatically at
+# most once in this many seconds; the owner's request ignores both.
+RESETS_AFTER_REJECTIONS = 3
+RESET_COOLDOWN_SECONDS = 3600
 
 Clock = Callable[[], datetime]
 Sleep = Callable[[float], Awaitable[None]]
@@ -166,12 +185,18 @@ class DisplayStatus:
     """What `run_display` last sent the board, for the status page to report.
 
     `presentation` is the one last attempted, `None` before the first push;
-    `push_failed` is whether its latest push failed. Written only by the loop
-    and read by the routes, both on the one event loop, so no lock is needed.
+    `push_failed` is whether its latest push failed; `last_reset_at` is when
+    the loop last reset the board, `None` before the first reset.
+    `reset_requested` is the one field a route writes, to ask for a reset,
+    and the loop clears it once it has carried the reset out. Everything else
+    is written only by the loop. The loop and the routes all run on the one
+    event loop, so no lock is needed.
     """
 
     presentation: Presentation | None = None
     push_failed: bool = False
+    last_reset_at: datetime | None = None
+    reset_requested: bool = False
 
 
 def _utc_now() -> datetime:
@@ -279,8 +304,9 @@ async def run_display(
     switched on, covers are wanted enhanced. `spend_fraction` returns today's
     AI spend over the daily limit, read on every sample for the spend bar of
     a generating cover; it means something only with `covers`. `status`, when
-    given, is kept up to date with the presentation last attempted and
-    whether its push failed.
+    given, is kept up to date with the presentation last attempted, whether
+    its push failed and when the board was last reset, and its
+    `reset_requested` is honoured on the next sample.
     Nothing but `CancelledError` leaves this coroutine: the task must not be
     able to prevent the application from serving.
     """
@@ -303,6 +329,10 @@ async def run_display(
     push_failed = False
     retry_in = 0.0
     retry_delay = PUSH_RETRY_INITIAL_SECONDS
+    # Refused uploads in a row, whatever was being pushed; and whether a reset
+    # has happened that no push has landed after yet.
+    rejections = 0
+    reset_unconfirmed = False
     while True:
         try:
             if transport.link_state is LinkState.DOWN:
@@ -310,6 +340,29 @@ async def run_display(
                 # count makes this same sample redraw.
                 logger.info("board link lost; reconnecting")
                 await _connect(transport, sleep)
+            if _reset_due(status, rejections, clock()):
+                if status.reset_requested:
+                    logger.warning("resetting the board on the owner's request")
+                else:
+                    logger.warning("resetting the board after %s rejected uploads", rejections)
+                # Recorded before the reset, so one that fails still starts
+                # the cooldown rather than being tried again every sample.
+                status.last_reset_at = clock()
+                status.reset_requested = False
+                rejections = 0
+                try:
+                    await transport.reset()
+                except Exception as error:
+                    logger.warning(
+                        "resetting the board failed (%s: %s)", type(error).__name__, error
+                    )
+                reset_unconfirmed = True
+                # The board is blank now, so the frame is due again in this
+                # sample, as a retry from the start of its backoff; before the
+                # first push the first push is due anyway.
+                push_failed = True
+                retry_in = 0.0
+                retry_delay = PUSH_RETRY_INITIAL_SECONDS
             snapshot = current()
             cover: tuple[str, CoverState] | None = None
             fraction: float | None = None
@@ -363,10 +416,18 @@ async def run_display(
                 due = False
             if due:
                 first = retry_delay == PUSH_RETRY_INITIAL_SECONDS
-                push_failed = not await _push(
+                error = await _push(
                     transport, _frame_for(wanted[0], size, retained), retry_delay, first
                 )
+                push_failed = error is not None
                 status.push_failed = push_failed
+                if isinstance(error, BoardRejectedUpload):
+                    rejections += 1
+                elif error is None:
+                    rejections = 0
+                    if reset_unconfirmed:
+                        logger.info("board accepted a frame again after the reset")
+                        reset_unconfirmed = False
                 if push_failed:
                     retry_in = retry_delay
                     retry_delay = min(retry_delay * 2, PUSH_RETRY_MAX_SECONDS)
@@ -431,10 +492,21 @@ async def _connect(transport: BoardTransport, sleep: Sleep) -> None:
             return
 
 
+def _reset_due(status: DisplayStatus, rejections: int, now: datetime) -> bool:
+    """Whether the board is to be reset now: asked for, or refusing and out of cooldown."""
+    if status.reset_requested:
+        return True
+    if rejections < RESETS_AFTER_REJECTIONS:
+        return False
+    return status.last_reset_at is None or now - status.last_reset_at >= timedelta(
+        seconds=RESET_COOLDOWN_SECONDS
+    )
+
+
 async def _push(
     transport: BoardTransport, frame: Image.Image, retry_in: float, first: bool
-) -> bool:
-    """Push `frame`; on failure log it and return `False`, never raise."""
+) -> Exception | None:
+    """Push `frame`; on failure log it and return the error, never raise."""
     try:
         await transport.push_frame(frame)
     except Exception as error:
@@ -446,5 +518,5 @@ async def _push(
             retry_in,
             exc_info=first,
         )
-        return False
-    return True
+        return error
+    return None

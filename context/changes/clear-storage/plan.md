@@ -266,15 +266,15 @@ None. `last_reset_at` is additive in `/status`; no persisted state changes.
 
 #### Automated
 
-- [x] 1.1 Transport tests pass: `uv run pytest tests/test_idotmatrix_transport.py tests/test_stub_transport.py`
-- [x] 1.2 Full suite passes: `uv run pytest`
+- [x] 1.1 Transport tests pass: `uv run pytest tests/test_idotmatrix_transport.py tests/test_stub_transport.py` — bd87375
+- [x] 1.2 Full suite passes: `uv run pytest` — bd87375
 
 ### Phase 2: Display loop — automatic and manual reset
 
 #### Automated
 
-- [ ] 2.1 Display tests pass: `uv run pytest tests/test_display.py`
-- [ ] 2.2 Full suite passes: `uv run pytest`
+- [x] 2.1 Display tests pass: `uv run pytest tests/test_display.py`
+- [x] 2.2 Full suite passes: `uv run pytest`
 
 ### Phase 3: Status, manual trigger and docs
 

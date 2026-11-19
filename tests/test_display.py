@@ -27,7 +27,7 @@ import pytest
 from PIL import Image
 
 from spotify_to_led import frames
-from spotify_to_led.board.transport import LinkState
+from spotify_to_led.board.transport import BoardRejectedUpload, LinkState
 from spotify_to_led.covers import PENDING, CoverLoader, CoverState, CoverStatus
 from spotify_to_led.enhance import Enhancer
 from spotify_to_led.frame_cache import FrameCache
@@ -135,14 +135,29 @@ def marked(presentation: Presentation) -> Presentation:
 
 
 class FakeBoard:
-    """A `BoardTransport` whose first connects and pushes can be made to fail."""
+    """A `BoardTransport` whose first connects, pushes and resets can be made to fail.
 
-    def __init__(self, *, failing_connects: int = 0, failing_pushes: int = 0) -> None:
+    The first `failing_pushes` pushes fail as an unacknowledged write; after
+    them, the next `rejecting_pushes` are refused by the board.
+    """
+
+    def __init__(
+        self,
+        *,
+        failing_connects: int = 0,
+        failing_pushes: int = 0,
+        rejecting_pushes: int = 0,
+        failing_resets: int = 0,
+    ) -> None:
         self.failing_connects = failing_connects
         self.failing_pushes = failing_pushes
+        self.rejecting_pushes = rejecting_pushes
+        self.failing_resets = failing_resets
         self.failing_reconnects = 0
         self.connects = 0
         self.connections = 0
+        # Every reset asked for, including the ones that raised.
+        self.resets = 0
         # Every frame pushed, including the ones whose push raised.
         self.pushed: list[Image.Image] = []
         self._link_state = LinkState.DOWN
@@ -179,6 +194,14 @@ class FakeBoard:
         self.pushed.append(frame)
         if len(self.pushed) <= self.failing_pushes:
             raise OSError("the write was not acknowledged")
+        if self.rejecting_pushes:
+            self.rejecting_pushes -= 1
+            raise BoardRejectedUpload("the board refused the upload")
+
+    async def reset(self) -> None:
+        self.resets += 1
+        if self.resets <= self.failing_resets:
+            raise TimeoutError("the board did not answer the reset")
 
     async def close(self) -> None:
         self._link_state = LinkState.DOWN
@@ -734,6 +757,183 @@ async def test_cancelling_while_a_connect_is_in_flight_ends_the_task_without_a_w
     assert task.cancelled(), "the cancellation was swallowed and the loop went on"
     assert board.connects == 1
     assert caplog.records == []
+
+
+# --- the loop: resetting a board that refuses uploads ---------------------
+
+
+class MovingClock:
+    """A clock standing at `now`, which a test moves between samples."""
+
+    def __init__(self, now: datetime = NOW) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+async def run_with_status(
+    board: FakeBoard,
+    current: Callable[[], PlaybackSnapshot | None],
+    sleep: FakeSleep,
+    status: DisplayStatus,
+    clock: Callable[[], datetime] = lambda: NOW,
+) -> None:
+    with pytest.raises(asyncio.CancelledError):
+        await run_display(board, SIZE, current, status=status, clock=clock, sleep=sleep)
+
+
+def alternating(samples: int) -> Callable[[], PlaybackSnapshot | None]:
+    """Idle and the placeholder by turns, so every sample pushes a new presentation."""
+    return scripted(*[NOTHING if n % 2 == 0 else PLAYING for n in range(samples)])
+
+
+async def test_three_refused_uploads_reset_the_board_once_and_the_frame_is_pushed_at_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Refused at the first sample, 1 s and 2 s later on the push backoff; the
+    # sample after the third refusal resets and pushes again.
+    board = FakeBoard(rejecting_pushes=3)
+    status = DisplayStatus()
+    seen: list[tuple[int, int]] = []
+    sleep = ActingSleep(
+        sleeps=6, actions={4: lambda: seen.append((board.resets, len(board.pushed)))}
+    )
+
+    with caplog.at_level(logging.INFO, logger="spotify_to_led.display"):
+        await run_with_status(board, scripted(*[NOTHING] * 6), sleep, status)
+
+    assert seen == [(0, 3)]
+    assert board.resets == 1
+    # The reset and its push in the same sample, then nothing more.
+    assert board.drawn == ["idle"] * 4
+    assert status.last_reset_at == NOW
+    assert status.push_failed is False
+    assert "resetting the board after 3 rejected uploads" in caplog.text
+    accepted = [r for r in caplog.records if "accepted a frame again" in r.getMessage()]
+    assert len(accepted) == 1, "logged once per reset, not on every push that lands"
+    assert accepted[0].levelno == logging.INFO
+
+
+async def test_refusals_broken_by_a_push_that_lands_never_reset() -> None:
+    board = FakeBoard(rejecting_pushes=2)
+    sleep = ActingSleep(sleeps=6, actions={3: lambda: setattr(board, "rejecting_pushes", 2)})
+
+    await run_with_status(board, alternating(6), sleep, DisplayStatus())
+
+    assert board.resets == 0
+    assert board.drawn == ["idle", "placeholder"] * 3
+
+
+async def test_refusals_spanning_a_presentation_change_still_count() -> None:
+    board = FakeBoard(rejecting_pushes=3)
+    current = scripted(NOTHING, NOTHING, PLAYING, PLAYING)
+
+    await run_with_status(board, current, FakeSleep(sleeps=4), DisplayStatus())
+
+    assert board.resets == 1
+    assert board.drawn == ["idle", "idle", "placeholder", "placeholder"]
+
+
+async def test_failed_pushes_that_were_not_refused_never_reset() -> None:
+    board = FakeBoard(failing_pushes=6)
+
+    await run_with_status(board, alternating(6), FakeSleep(sleeps=6), DisplayStatus())
+
+    assert len(board.pushed) == 6
+    assert board.resets == 0
+
+
+async def test_failed_pushes_that_were_not_refused_do_not_clear_the_count() -> None:
+    # Two refusals, three unacknowledged writes, one more refusal: three.
+    board = FakeBoard(rejecting_pushes=2)
+    seen: list[int] = []
+
+    def after_two_refusals() -> None:
+        board.failing_pushes = 5
+        board.rejecting_pushes = 1
+
+    sleep = ActingSleep(
+        sleeps=7, actions={2: after_two_refusals, 6: lambda: seen.append(board.resets)}
+    )
+
+    await run_with_status(board, alternating(7), sleep, DisplayStatus())
+
+    assert seen == [0]
+    assert board.resets == 1
+    assert len(board.pushed) == 7
+
+
+async def test_a_board_still_refusing_after_a_reset_waits_out_the_hour_before_the_next() -> None:
+    # Reset at the fifth sample; three more refusals by the eighth, but the
+    # next reset waits until 3600 s on the clock.
+    board = FakeBoard(rejecting_pushes=1_000)
+    clock = MovingClock()
+    status = DisplayStatus()
+    seen: list[int] = []
+
+    def move_to(seconds: float) -> Callable[[], None]:
+        def action() -> None:
+            seen.append(board.resets)
+            clock.now = NOW + timedelta(seconds=seconds)
+
+        return action
+
+    sleep = ActingSleep(sleeps=11, actions={9: move_to(3599), 10: move_to(3600)})
+
+    await run_with_status(board, scripted(*[NOTHING] * 11), sleep, status, clock)
+
+    assert seen == [1, 1]
+    assert board.resets == 2
+    assert status.last_reset_at == NOW + timedelta(seconds=3600)
+
+
+async def test_the_owners_request_resets_at_once_inside_the_cooldown_and_without_refusals(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    board = FakeBoard()
+    status = DisplayStatus(last_reset_at=NOW - timedelta(seconds=10))
+    sleep = ActingSleep(sleeps=3, actions={1: lambda: setattr(status, "reset_requested", True)})
+
+    with caplog.at_level(logging.WARNING, logger="spotify_to_led.display"):
+        await run_with_status(board, scripted(*[NOTHING] * 3), sleep, status)
+
+    assert board.resets == 1
+    assert status.reset_requested is False
+    assert status.last_reset_at == NOW
+    # The board is blank after the reset, so the unchanged frame is drawn again.
+    assert board.drawn == ["idle", "idle"]
+    assert "resetting the board on the owner's request" in caplog.text
+
+
+async def test_the_owners_request_before_anything_was_pushed_resets_then_pushes_once() -> None:
+    board = FakeBoard()
+    status = DisplayStatus(reset_requested=True)
+
+    await run_with_status(board, scripted(NOTHING, NOTHING), FakeSleep(sleeps=2), status)
+
+    assert board.resets == 1
+    assert status.reset_requested is False
+    assert board.drawn == ["idle"]
+
+
+async def test_a_reset_that_raises_is_logged_and_the_loop_keeps_going(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    board = FakeBoard(rejecting_pushes=3, failing_resets=1)
+    status = DisplayStatus()
+
+    with caplog.at_level(logging.WARNING, logger="spotify_to_led.display"):
+        await run_with_status(board, scripted(*[NOTHING] * 6), FakeSleep(sleeps=6), status)
+
+    assert board.resets == 1
+    assert status.last_reset_at == NOW
+    assert board.drawn == ["idle"] * 4
+    failed = [r for r in caplog.records if "resetting the board failed" in r.getMessage()]
+    assert len(failed) == 1
+    assert failed[0].levelno == logging.WARNING
+    assert "TimeoutError" in failed[0].getMessage()
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
 
 
 # --- the loop: covers -----------------------------------------------------
